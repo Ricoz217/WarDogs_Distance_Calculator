@@ -1,0 +1,17 @@
+/build/
+/out/
+/.vs/
+/.cache/
+*.user
+*.log
+*.7z
+*.zip
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+Testing/
+.ninja_deps
+.ninja_log
+/third_party/onnxruntime/package/
+/third_party/onnxruntime/*.nupkg

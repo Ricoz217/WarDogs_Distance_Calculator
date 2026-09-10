@@ -1,0 +1,12 @@
+* text=auto
+
+*.cpp text eol=lf
+*.hpp text eol=lf
+*.md text eol=lf
+*.txt text eol=lf
+*.ps1 text eol=crlf
+
+*.dll binary
+*.lib binary
+*.onnx binary
+*.png binary
