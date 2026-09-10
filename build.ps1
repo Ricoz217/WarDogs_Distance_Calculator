@@ -24,6 +24,12 @@ $qtDeploy = Join-Path $qtRoot 'bin\windeployqt.exe'
 if (-not (Test-Path $qtCmake) -or -not (Test-Path $qtDeploy)) {
     throw "找不到 Qt 6 C++ 开发环境：$qtRoot"
 }
+$projectDeclaration = Select-String -LiteralPath (Join-Path $projectRoot 'CMakeLists.txt') `
+    -Pattern 'project\(WarDogsDistanceCalculator VERSION ([0-9]+\.[0-9]+\.[0-9]+)'
+if (-not $projectDeclaration) {
+    throw '无法从 CMakeLists.txt 读取项目版本。'
+}
+$projectVersion = $projectDeclaration.Matches[0].Groups[1].Value
 $buildDirectory = Join-Path $projectRoot "out\$($Configuration.ToLowerInvariant())"
 $installDirectory = Join-Path $projectRoot "out\package"
 
@@ -66,7 +72,7 @@ if ($Package) {
         -Destination $qtLicenseDirectory
     Copy-Item -LiteralPath (Join-Path $projectRoot 'third_party\qt\GPL-3.0.txt') `
         -Destination $qtLicenseDirectory
-    $archive = Join-Path $projectRoot 'out\WarDogsDistanceCalculator-win-x64.zip'
+    $archive = Join-Path $projectRoot "out\WarDogsDistanceCalculator-v$projectVersion-win-x64.zip"
     Compress-Archive -Path (Join-Path $installDirectory '*') -DestinationPath $archive -Force
     Write-Host "已生成：$archive"
 } else {

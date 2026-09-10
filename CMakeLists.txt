@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(WarDogsDistanceCalculator VERSION 0.1.0 LANGUAGES CXX)
+project(WarDogsDistanceCalculator VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CL_SHOWINCLUDES_PREFIX "注意: 包含文件:")
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets)
@@ -30,14 +30,22 @@ if(MSVC)
 endif()
 
 if(WIN32)
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/version.rc.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/version.rc"
+        @ONLY
+    )
     qt_add_executable(WarDogsDistanceCalculator WIN32
         src/app.cpp
         src/capture.cpp
         src/settings.cpp
         src/windows_ocr.cpp
+        "${CMAKE_CURRENT_BINARY_DIR}/version.rc"
     )
     target_include_directories(WarDogsDistanceCalculator PRIVATE include)
-    target_compile_definitions(WarDogsDistanceCalculator PRIVATE UNICODE _UNICODE NOMINMAX)
+    target_compile_definitions(WarDogsDistanceCalculator PRIVATE
+        UNICODE _UNICODE NOMINMAX WARDOGS_VERSION="${PROJECT_VERSION}"
+    )
     target_compile_options(WarDogsDistanceCalculator PRIVATE /W4 /permissive- /utf-8)
     target_link_libraries(WarDogsDistanceCalculator PRIVATE
         wardogs_core Qt6::Widgets dwmapi gdi32 user32 windowsapp

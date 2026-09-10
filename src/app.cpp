@@ -792,6 +792,7 @@ int main(int argc, char* argv[]) {
     QApplication::setHighDpiScaleFactorRoundingPolicy(
         Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
     QApplication app(argc, argv);
+    QApplication::setApplicationVersion(QStringLiteral(WARDOGS_VERSION));
     QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
     app.setStyleSheet(QString::fromUtf8(style_sheet));
     MainWindow window;
