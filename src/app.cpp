@@ -25,6 +25,8 @@
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QMessageBox>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
@@ -60,6 +62,130 @@ std::filesystem::path executable_directory() {
     buffer.resize(length);
     return std::filesystem::path{buffer}.parent_path();
 }
+
+QWidget* result_card(const QString& caption, const QString& color, QLabel*& value) {
+    auto* card = new QFrame;
+    card->setObjectName(QStringLiteral("resultCard"));
+    auto* layout = new QVBoxLayout(card);
+    layout->setContentsMargins(10, 9, 10, 11);
+    layout->setSpacing(3);
+    auto* label = new QLabel(caption);
+    label->setObjectName(QStringLiteral("resultCaption"));
+    label->setAlignment(Qt::AlignCenter);
+    value = new QLabel(QStringLiteral("—"));
+    value->setAlignment(Qt::AlignCenter);
+    value->setMinimumHeight(58);
+    value->setStyleSheet(QStringLiteral(
+        "color:%1;font-family:'Bahnschrift';font-size:36px;font-weight:700;").arg(color));
+    layout->addWidget(label);
+    layout->addWidget(value);
+    return card;
+}
+
+QIcon pin_icon() {
+    QPixmap image(24, 24);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QColor color(QStringLiteral("#e2e8f0"));
+    painter.setPen(QPen(color, 1.8, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+    painter.setBrush(color);
+    const QPolygonF body{{8.0, 3.0}, {16.0, 3.0}, {14.3, 6.0},
+                         {14.3, 11.0}, {17.5, 14.0}, {6.5, 14.0},
+                         {9.7, 11.0}, {9.7, 6.0}};
+    painter.drawPolygon(body);
+    painter.drawLine(QPointF(12.0, 14.0), QPointF(12.0, 21.0));
+    return QIcon(image);
+}
+
+class PinnedResultWindow final : public QWidget {
+public:
+    explicit PinnedResultWindow(std::function<void()> exit_callback)
+        : QWidget(nullptr, Qt::Tool | Qt::FramelessWindowHint |
+                               Qt::WindowStaysOnTopHint),
+          exit_callback_(std::move(exit_callback)) {
+        setObjectName(QStringLiteral("pinnedWindow"));
+        setAttribute(Qt::WA_TranslucentBackground);
+        setCursor(Qt::OpenHandCursor);
+        setWindowTitle(QStringLiteral("War Dogs 射表结果"));
+
+        auto* outer = new QVBoxLayout(this);
+        outer->setContentsMargins(0, 0, 0, 0);
+        frame_ = new QFrame;
+        frame_->setObjectName(QStringLiteral("pinnedFrame"));
+        frame_->setProperty("error", false);
+        auto* layout = new QHBoxLayout(frame_);
+        layout->setContentsMargins(8, 8, 8, 8);
+        layout->setSpacing(8);
+        layout->addWidget(result_card(QStringLiteral("射程"), QStringLiteral("#fbbf24"),
+                                      distance_), 1);
+        layout->addWidget(result_card(QStringLiteral("方位"), QStringLiteral("#67e8f9"),
+                                      bearing_), 1);
+        outer->addWidget(frame_);
+
+        resize(470, 128);
+    }
+
+    void set_values(const QString& distance, const QString& bearing) {
+        distance_->setText(distance);
+        bearing_->setText(bearing);
+    }
+
+    void set_error(bool error) {
+        frame_->setProperty("error", error);
+        frame_->style()->unpolish(frame_);
+        frame_->style()->polish(frame_);
+        frame_->update();
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton) {
+            dragging_ = true;
+            drag_offset_ = event->globalPosition().toPoint() - frameGeometry().topLeft();
+            setCursor(Qt::ClosedHandCursor);
+            event->accept();
+            return;
+        }
+        QWidget::mousePressEvent(event);
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override {
+        if (dragging_ && (event->buttons() & Qt::LeftButton)) {
+            move(event->globalPosition().toPoint() - drag_offset_);
+            event->accept();
+            return;
+        }
+        QWidget::mouseMoveEvent(event);
+    }
+
+    void mouseReleaseEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton) {
+            dragging_ = false;
+            setCursor(Qt::OpenHandCursor);
+            event->accept();
+            return;
+        }
+        QWidget::mouseReleaseEvent(event);
+    }
+
+    void mouseDoubleClickEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton) {
+            dragging_ = false;
+            if (exit_callback_) exit_callback_();
+            event->accept();
+            return;
+        }
+        QWidget::mouseDoubleClickEvent(event);
+    }
+
+private:
+    std::function<void()> exit_callback_;
+    QFrame* frame_{};
+    QLabel *distance_{}, *bearing_{};
+    bool dragging_{};
+    QPoint drag_offset_{};
+};
 
 class SelectionOverlay {
 public:
@@ -207,7 +333,7 @@ private:
 class SettingsDialog final : public QDialog {
 public:
     explicit SettingsDialog(const wardogs::AppSettings& settings, QWidget* parent)
-        : QDialog(parent) {
+        : QDialog(parent), capture_region_(settings.capture_region) {
         setWindowTitle(QStringLiteral("设置 · War Dogs 射表计算"));
         setModal(true);
         resize(660, 465);
@@ -218,7 +344,7 @@ public:
         title->setObjectName(QStringLiteral("dialogTitle"));
         root->addWidget(title);
         auto* subtitle = new QLabel(
-            QStringLiteral("修改后立即保存；OCR 区域仍只保留在内存中"));
+            QStringLiteral("修改后立即保存；OCR 区域也会在下次启动时恢复"));
         subtitle->setObjectName(QStringLiteral("muted"));
         root->addWidget(subtitle);
 
@@ -273,6 +399,7 @@ public:
         value.target_hotkey = hotkey_text(target_key_);
         value.quick_target_hotkey = hotkey_text(quick_target_key_);
         value.coordinate_pattern = pattern_->toPlainText().trimmed().toStdWString();
+        value.capture_region = capture_region_;
         return value;
     }
 
@@ -283,6 +410,7 @@ private:
     QKeySequenceEdit* target_key_{};
     QKeySequenceEdit* quick_target_key_{};
     QPlainTextEdit* pattern_{};
+    std::optional<wardogs::CaptureRegion> capture_region_;
 
     static QKeySequenceEdit* make_hotkey(const std::wstring& value,
                                          QHBoxLayout* layout,
@@ -342,6 +470,17 @@ class MainWindow final : public QMainWindow, public QAbstractNativeEventFilter {
 public:
     MainWindow() {
         try { settings_ = wardogs::load_settings(); } catch (...) { settings_ = {}; }
+        bool saved_region_invalid = false;
+        if (settings_.capture_region) {
+            try {
+                (void)wardogs::resolve_capture_region(*settings_.capture_region);
+                region_ = settings_.capture_region;
+            } catch (...) {
+                settings_.capture_region.reset();
+                saved_region_invalid = true;
+                try { wardogs::save_settings(settings_); } catch (...) {}
+            }
+        }
         setWindowTitle(QStringLiteral("War Dogs 射表计算"));
         resize(620, 610);
         setMinimumWidth(560);
@@ -349,6 +488,11 @@ public:
         update_coordinates();
         update_engine_summary();
         update_action_labels();
+        update_region_summary();
+        if (region_)
+            set_status(QStringLiteral("就绪；已恢复保存的 OCR 区域"));
+        else if (saved_region_invalid)
+            set_status(QStringLiteral("已保存的 OCR 区域不可用，请重新设置"), true);
         enable_dark_title_bar(reinterpret_cast<HWND>(winId()));
         qApp->installNativeEventFilter(this);
         try { register_hotkeys(settings_); }
@@ -394,42 +538,39 @@ private:
     std::jthread worker_;
     std::atomic_bool busy_{false};
     SelectionOverlay selector_;
+    std::unique_ptr<PinnedResultWindow> pinned_window_;
+    bool pinned_mode_{};
+    bool failure_state_{};
+    QFrame* app_frame_{};
     QLabel *base_summary_{}, *target_summary_{}, *distance_{}, *bearing_{};
     QLabel *raw_result_{}, *engine_summary_{}, *region_summary_{}, *ocr_text_{}, *status_{};
     QLineEdit *base_input_{}, *target_input_{};
     QPushButton *region_button_{}, *base_button_{}, *target_button_{},
         *quick_target_button_{};
 
-    static QWidget* result_card(const QString& caption, const QString& color,
-                                QLabel*& value) {
-        auto* card = new QFrame;
-        card->setObjectName(QStringLiteral("resultCard"));
-        auto* layout = new QVBoxLayout(card);
-        layout->setContentsMargins(10, 9, 10, 11);
-        layout->setSpacing(3);
-        auto* label = new QLabel(caption);
-        label->setObjectName(QStringLiteral("resultCaption"));
-        label->setAlignment(Qt::AlignCenter);
-        value = new QLabel(QStringLiteral("—"));
-        value->setAlignment(Qt::AlignCenter);
-        value->setMinimumHeight(58);
-        value->setStyleSheet(QStringLiteral(
-            "color:%1;font-family:'Bahnschrift';font-size:36px;font-weight:700;").arg(color));
-        layout->addWidget(label);
-        layout->addWidget(value);
-        return card;
-    }
-
     void build_ui() {
-        auto* central = new QWidget;
-        auto* root = new QVBoxLayout(central);
+        app_frame_ = new QFrame;
+        app_frame_->setObjectName(QStringLiteral("appFrame"));
+        app_frame_->setProperty("error", false);
+        auto* root = new QVBoxLayout(app_frame_);
         root->setContentsMargins(20, 16, 20, 16);
         root->setSpacing(10);
+        auto* heading = new QHBoxLayout;
         auto* title = new QLabel(QStringLiteral("射表计算"));
         title->setObjectName(QStringLiteral("title"));
+        auto* pin_button = new QPushButton;
+        pin_button->setObjectName(QStringLiteral("iconButton"));
+        pin_button->setIcon(pin_icon());
+        pin_button->setIconSize(QSize(22, 22));
+        pin_button->setFixedSize(38, 34);
+        pin_button->setToolTip(QStringLiteral("置顶显示射表结果"));
+        pin_button->setAccessibleName(QStringLiteral("进入置顶模式"));
+        heading->addWidget(title);
+        heading->addStretch();
+        heading->addWidget(pin_button);
         auto* subtitle = new QLabel(QStringLiteral("OCR 热键和手动输入共用同一套计算逻辑"));
         subtitle->setObjectName(QStringLiteral("muted"));
-        root->addWidget(title);
+        root->addLayout(heading);
         root->addWidget(subtitle);
 
         auto* coordinates = new QGroupBox(QStringLiteral("坐标"));
@@ -472,7 +613,7 @@ private:
         auto* ocr_layout = new QVBoxLayout(ocr);
         ocr_layout->setSpacing(7);
         engine_summary_ = new QLabel;
-        region_summary_ = new QLabel(QStringLiteral("OCR 区域：尚未设置（仅在本次运行中保存）"));
+        region_summary_ = new QLabel(QStringLiteral("OCR 区域：尚未设置"));
         ocr_layout->addWidget(engine_summary_);
         ocr_layout->addWidget(region_summary_);
         auto* actions = new QHBoxLayout;
@@ -496,7 +637,7 @@ private:
         status_->setObjectName(QStringLiteral("status"));
         status_->setWordWrap(true);
         root->addWidget(status_);
-        setCentralWidget(central);
+        setCentralWidget(app_frame_);
 
         connect(manual_base, &QPushButton::clicked, this, &MainWindow::manual_base);
         connect(base_input_, &QLineEdit::returnPressed, this, &MainWindow::manual_base);
@@ -508,13 +649,65 @@ private:
         connect(quick_target_button_, &QPushButton::clicked, this,
                 &MainWindow::begin_quick_target);
         connect(settings_button, &QPushButton::clicked, this, &MainWindow::edit_settings);
+        connect(pin_button, &QPushButton::clicked, this, &MainWindow::enter_pinned_mode);
     }
 
     void set_status(const QString& text, bool error = false) {
+        set_failure_state(error);
         status_->setProperty("error", error);
         status_->style()->unpolish(status_);
         status_->style()->polish(status_);
         status_->setText(text);
+    }
+
+    void set_failure_state(bool failed) {
+        failure_state_ = failed;
+        if (app_frame_) {
+            app_frame_->setProperty("error", failed);
+            app_frame_->style()->unpolish(app_frame_);
+            app_frame_->style()->polish(app_frame_);
+            app_frame_->update();
+        }
+        if (pinned_window_) pinned_window_->set_error(failed);
+    }
+
+    void enter_pinned_mode() {
+        if (!pinned_window_) {
+            pinned_window_ = std::make_unique<PinnedResultWindow>(
+                [this] { exit_pinned_mode(); });
+        }
+        pinned_window_->set_values(distance_->text(), bearing_->text());
+        pinned_window_->set_error(failure_state_);
+        pinned_window_->move(frameGeometry().topLeft());
+        pinned_mode_ = true;
+        hide();
+        pinned_window_->show();
+        pinned_window_->raise();
+    }
+
+    void exit_pinned_mode() {
+        if (!pinned_mode_) return;
+        pinned_mode_ = false;
+        if (pinned_window_) pinned_window_->hide();
+        showNormal();
+        raise();
+        activateWindow();
+    }
+
+    void hide_for_selection() {
+        if (pinned_mode_ && pinned_window_) pinned_window_->hide();
+        else hide();
+    }
+
+    void restore_after_selection() {
+        if (pinned_mode_ && pinned_window_) {
+            pinned_window_->show();
+            pinned_window_->raise();
+        } else {
+            showNormal();
+            raise();
+            activateWindow();
+        }
     }
 
     void update_coordinates() {
@@ -538,10 +731,25 @@ private:
             : QStringLiteral("当前引擎：Windows 系统 OCR（兼容备用）"));
     }
 
+    void update_region_summary() {
+        if (!region_) {
+            region_summary_->setText(QStringLiteral("OCR 区域：尚未设置"));
+            return;
+        }
+        const RECT& rect = region_->relative;
+        region_summary_->setText(
+            QStringLiteral("OCR 区域：%1 · %2×%3 px @ (%4, %5) · 已保存")
+                .arg(qtext(region_->monitor_device))
+                .arg(rect.right - rect.left).arg(rect.bottom - rect.top)
+                .arg(rect.left).arg(rect.top));
+    }
+
     void clear_result(const QString& text) {
         distance_->setText(QStringLiteral("—"));
         bearing_->setText(QStringLiteral("—"));
         raw_result_->setText(text);
+        if (pinned_window_)
+            pinned_window_->set_values(distance_->text(), bearing_->text());
     }
 
     void show_result(wardogs::Point target) {
@@ -549,6 +757,8 @@ private:
         distance_->setText(qtext(wardogs::format_distance_meters(result.distance)));
         bearing_->setText(qtext(wardogs::format_bearing(result.angle)));
         raw_result_->setText(qtext(wardogs::format_raw_distance(result.distance)));
+        if (pinned_window_)
+            pinned_window_->set_values(distance_->text(), bearing_->text());
     }
 
     void manual_base() {
@@ -575,44 +785,49 @@ private:
 
     void begin_region_setup() {
         if (busy_) { set_status(QStringLiteral("OCR 正在执行，请稍候")); return; }
-        hide();
+        hide_for_selection();
         const bool started = selector_.begin(
             [this](std::optional<wardogs::CaptureRegion> region, QString error) {
-                showNormal(); raise(); activateWindow();
+                restore_after_selection();
                 if (!error.isEmpty()) { set_status(error, true); return; }
                 if (!region) { set_status(QStringLiteral("已取消设置区域")); return; }
                 region_ = std::move(region);
-                const RECT& rect = region_->relative;
-                region_summary_->setText(
-                    QStringLiteral("OCR 区域：%1 · %2×%3 px @ (%4, %5) · 仅本次运行")
-                        .arg(qtext(region_->monitor_device))
-                        .arg(rect.right - rect.left).arg(rect.bottom - rect.top)
-                        .arg(rect.left).arg(rect.top));
-                set_status(QStringLiteral("OCR 区域已更新；显示器已自动识别"));
+                settings_.capture_region = region_;
+                update_region_summary();
+                try {
+                    wardogs::save_settings(settings_);
+                    set_status(QStringLiteral("OCR 区域已保存；显示器已自动识别"));
+                } catch (const std::exception& error) {
+                    set_status(QStringLiteral("OCR 区域可在本次运行使用，但保存失败：") +
+                                   error_text(error), true);
+                }
             });
-        if (!started) { show(); set_status(QStringLiteral("无法启动区域设置"), true); }
+        if (!started) {
+            restore_after_selection();
+            set_status(QStringLiteral("无法启动区域设置"), true);
+        }
     }
 
     void begin_quick_target() {
         if (busy_) { set_status(QStringLiteral("OCR 正在执行，请稍候")); return; }
-        hide();
+        hide_for_selection();
         const bool started = selector_.begin(
             [this](std::optional<wardogs::CaptureRegion> region, QString error) {
                 if (!error.isEmpty()) {
-                    showNormal(); raise(); activateWindow();
+                    restore_after_selection();
                     set_status(error, true);
                     return;
                 }
                 if (!region) {
-                    showNormal(); raise(); activateWindow();
+                    restore_after_selection();
                     set_status(QStringLiteral("已取消快速目标框选"));
                     return;
                 }
                 start_ocr(*region, false);
-                showNormal(); raise(); activateWindow();
+                restore_after_selection();
             });
         if (!started) {
-            show();
+            restore_after_selection();
             set_status(QStringLiteral("无法启动快速目标框选"), true);
         }
     }
@@ -754,6 +969,11 @@ private:
 constexpr auto style_sheet = R"(
 QWidget { color:#e5e7eb; font-family:"Microsoft YaHei UI"; font-size:13px; }
 QMainWindow,QDialog { background:#111827; }
+QFrame#appFrame { background:#111827; border:3px solid transparent; }
+QFrame#appFrame[error="true"] { border-color:#ef4444; }
+QFrame#pinnedFrame { background:#0f172a; border:3px solid transparent;
+                     border-radius:10px; }
+QFrame#pinnedFrame[error="true"] { border-color:#ef4444; }
 QLabel#title,QLabel#dialogTitle { color:#f8fafc; font-size:26px; font-weight:700; }
 QLabel#dialogTitle { font-size:23px; }
 QLabel#muted { color:#94a3b8; }
@@ -778,6 +998,10 @@ QPushButton:hover { background:#1d4ed8; }
 QPushButton:pressed { background:#1e40af; }
 QPushButton[primary="true"] { background:#1d4ed8; }
 QPushButton[primary="true"]:hover { background:#2563eb; }
+QPushButton#iconButton { background:#0f172a; border:1px solid #334155;
+                         border-radius:6px; padding:5px; min-height:0; }
+QPushButton#iconButton:hover { background:#1e3a5f; border-color:#3b82f6; }
+QPushButton#iconButton:pressed { background:#1e40af; }
 QPushButton:disabled { color:#94a3b8; background:#334155; border-color:#475569; }
 QScrollBar:vertical { background:#0b1220; width:10px; margin:0; }
 QScrollBar::handle:vertical { background:#475569; border-radius:4px; min-height:24px; }
