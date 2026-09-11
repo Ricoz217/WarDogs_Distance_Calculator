@@ -15,3 +15,4 @@ Testing/
 .ninja_log
 /third_party/onnxruntime/package/
 /third_party/onnxruntime/*.nupkg
+/HANDOFF.md
