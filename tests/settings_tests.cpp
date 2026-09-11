@@ -46,6 +46,14 @@ int main() {
                   loaded.capture_region->relative.bottom == 81,
               "the persisted region keeps its monitor-relative rectangle");
     }
+    try {
+        check(wardogs::parse_ocr_coordinate(L"x99.67, y11.06",
+                                             loaded.coordinate_pattern) ==
+                  wardogs::Point{99.67, 11.06},
+              "a persisted default regex parses an ordinary coordinate pair");
+    } catch (const std::invalid_argument&) {
+        check(false, "a persisted default regex remains usable after INI round trip");
+    }
 
     {
         std::wofstream invalid(path, std::ios::trunc);

@@ -51,14 +51,19 @@ std::vector<std::wstring> split_characters(std::string_view value) {
     return result;
 }
 
-std::vector<float> prepare_image(const Image& image, int& tensor_width) {
+std::vector<float> prepare_image(const Image& image, int& tensor_width,
+                                 int crop_top = 0, int crop_bottom = 0) {
     if (image.width <= 0 || image.height <= 0 ||
         image.bgr.size() != static_cast<std::size_t>(image.width * image.height * 3)) {
         throw std::invalid_argument("OCR image must be packed three-channel BGR");
     }
+    if (crop_top < 0 || crop_bottom < 0 || crop_top + crop_bottom >= image.height) {
+        throw std::invalid_argument("OCR vertical crop is invalid");
+    }
     constexpr int target_height = 48;
     constexpr int minimum_width = 320;
-    const double ratio = static_cast<double>(image.width) / image.height;
+    const int source_height = image.height - crop_top - crop_bottom;
+    const double ratio = static_cast<double>(image.width) / source_height;
     tensor_width = std::max(minimum_width,
                             static_cast<int>(target_height * std::max(320.0 / 48.0, ratio)));
     const int resized_width = std::min(
@@ -67,12 +72,13 @@ std::vector<float> prepare_image(const Image& image, int& tensor_width) {
                               0.0F);
 
     const double scale_x = static_cast<double>(image.width) / resized_width;
-    const double scale_y = static_cast<double>(image.height) / target_height;
+    const double scale_y = static_cast<double>(source_height) / target_height;
     const std::size_t plane = static_cast<std::size_t>(target_height * tensor_width);
     for (int y = 0; y < target_height; ++y) {
-        const double source_y = (y + 0.5) * scale_y - 0.5;
-        const int y0 = std::clamp(static_cast<int>(std::floor(source_y)), 0, image.height - 1);
-        const int y1 = std::min(y0 + 1, image.height - 1);
+        const double source_y = crop_top + (y + 0.5) * scale_y - 0.5;
+        const int y0 = std::clamp(static_cast<int>(std::floor(source_y)), crop_top,
+                                  image.height - crop_bottom - 1);
+        const int y1 = std::min(y0 + 1, image.height - crop_bottom - 1);
         const double fy = std::clamp(source_y - std::floor(source_y), 0.0, 1.0);
         for (int x = 0; x < resized_width; ++x) {
             const double source_x = (x + 0.5) * scale_x - 0.5;
@@ -158,25 +164,38 @@ RapidOcr& RapidOcr::operator=(RapidOcr&&) noexcept = default;
 std::size_t RapidOcr::character_count() const { return impl_->characters.size(); }
 
 OcrResult RapidOcr::recognize(const Image& image) const {
-    int width = 0;
-    auto input = prepare_image(image, width);
-    const std::array<std::int64_t, 4> shape{1, 3, 48, width};
-    auto memory = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-    auto tensor = Ort::Value::CreateTensor<float>(memory, input.data(), input.size(),
-                                                   shape.data(), shape.size());
-    constexpr std::array<const char*, 1> input_names{"x"};
-    constexpr std::array<const char*, 1> output_names{"fetch_name_0"};
-    auto outputs = impl_->session.Run(Ort::RunOptions{nullptr}, input_names.data(),
-                                      &tensor, 1, output_names.data(), 1);
-    const auto output_shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
-    if (output_shape.size() != 3 || output_shape[0] != 1 || output_shape[2] <= 0) {
-        throw std::runtime_error("OCR model returned an unexpected tensor shape");
-    }
-    const auto steps = static_cast<std::size_t>(output_shape[1]);
-    const auto classes = static_cast<std::size_t>(output_shape[2]);
-    const float* values = outputs[0].GetTensorData<float>();
-    return decode_ctc(std::vector<float>(values, values + steps * classes), steps,
-                      classes, impl_->characters);
+    const auto infer = [this, &image](int crop_top, int crop_bottom) {
+        int width = 0;
+        auto input = prepare_image(image, width, crop_top, crop_bottom);
+        const std::array<std::int64_t, 4> shape{1, 3, 48, width};
+        auto memory = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+        auto tensor = Ort::Value::CreateTensor<float>(memory, input.data(), input.size(),
+                                                       shape.data(), shape.size());
+        constexpr std::array<const char*, 1> input_names{"x"};
+        constexpr std::array<const char*, 1> output_names{"fetch_name_0"};
+        auto outputs = impl_->session.Run(Ort::RunOptions{nullptr}, input_names.data(),
+                                          &tensor, 1, output_names.data(), 1);
+        const auto output_shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
+        if (output_shape.size() != 3 || output_shape[0] != 1 || output_shape[2] <= 0) {
+            throw std::runtime_error("OCR model returned an unexpected tensor shape");
+        }
+        const auto steps = static_cast<std::size_t>(output_shape[1]);
+        const auto classes = static_cast<std::size_t>(output_shape[2]);
+        const float* values = outputs[0].GetTensorData<float>();
+        return decode_ctc(std::vector<float>(values, values + steps * classes), steps,
+                          classes, impl_->characters);
+    };
+
+    OcrResult original = infer(0, 0);
+    if (image.height < 20) return original;
+
+    // Recognition-only models expect a tightly cropped text line. Preserve the
+    // user's exact region, but also try removing a small amount of vertical
+    // margin so repeated narrow glyphs receive enough horizontal time steps.
+    const int trim = std::clamp(static_cast<int>(std::lround(image.height * 0.10)),
+                                1, (image.height - 12) / 2);
+    OcrResult tightened = infer(trim, trim);
+    return tightened.confidence > original.confidence ? tightened : original;
 }
 
 }  // namespace wardogs
