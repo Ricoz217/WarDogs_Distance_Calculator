@@ -60,6 +60,21 @@ int main() {
         check(false, "direct OCR output keeps an embedded coordinate parseable");
     }
 
+    const auto repeated_image = load_image_file(WARDOGS_TEST_REPEATED_IMAGE);
+    check(repeated_image.width == 150 && repeated_image.height == 43,
+          "repeated-digit regression keeps the loose vertical crop");
+    const auto repeated = ocr.recognize(repeated_image);
+    check(repeated.text.find(L"x99.67") != std::wstring::npos,
+          "loose vertical crop preserves the x coordinate");
+    check(repeated.text.find(L"y111.06") != std::wstring::npos,
+          "recognition preserves three repeated 1 digits");
+    try {
+        check(parse_ocr_coordinate(repeated.text) == Point{99.67, 111.06},
+              "repeated-digit OCR output remains parseable");
+    } catch (const std::invalid_argument&) {
+        check(false, "repeated-digit OCR output contains a complete coordinate pair");
+    }
+
     if (failures) {
         std::cerr << failures << " test(s) failed\n";
         return 1;
