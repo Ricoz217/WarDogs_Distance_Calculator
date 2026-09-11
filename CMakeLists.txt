@@ -89,6 +89,18 @@ if(MSVC)
 endif()
 add_test(NAME wardogs_core_tests COMMAND wardogs_tests)
 
+add_executable(wardogs_settings_tests
+    tests/settings_tests.cpp
+    src/settings.cpp
+)
+target_include_directories(wardogs_settings_tests PRIVATE include)
+target_compile_definitions(wardogs_settings_tests PRIVATE UNICODE _UNICODE NOMINMAX)
+target_link_libraries(wardogs_settings_tests PRIVATE shell32 ole32)
+if(MSVC)
+    target_compile_options(wardogs_settings_tests PRIVATE /W4 /permissive- /utf-8)
+endif()
+add_test(NAME wardogs_settings_tests COMMAND wardogs_settings_tests)
+
 add_executable(wardogs_ocr_tests tests/ocr_tests.cpp)
 target_link_libraries(wardogs_ocr_tests PRIVATE wardogs_core)
 target_compile_definitions(wardogs_ocr_tests PRIVATE

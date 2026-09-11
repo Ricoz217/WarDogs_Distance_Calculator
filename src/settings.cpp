@@ -5,6 +5,7 @@
 #include <wrl/client.h>
 
 #include <array>
+#include <optional>
 #include <stdexcept>
 
 namespace wardogs {
@@ -26,6 +27,26 @@ void write_value(const std::filesystem::path& path, const wchar_t* key,
     }
 }
 
+std::optional<long> read_integer(const std::filesystem::path& path,
+                                 const wchar_t* key) {
+    const std::wstring text = read_value(path, key, L"");
+    if (text.empty()) return std::nullopt;
+    try {
+        std::size_t consumed = 0;
+        const long value = std::stol(text, &consumed);
+        if (consumed != text.size()) return std::nullopt;
+        return value;
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
+void remove_value(const std::filesystem::path& path, const wchar_t* key) {
+    if (!WritePrivateProfileStringW(L"settings", key, nullptr, path.c_str())) {
+        throw std::runtime_error("cannot remove settings value");
+    }
+}
+
 }  // namespace
 
 std::filesystem::path settings_path() {
@@ -40,9 +61,8 @@ std::filesystem::path settings_path() {
     return path;
 }
 
-AppSettings load_settings() {
+AppSettings load_settings_from(const std::filesystem::path& path) {
     AppSettings settings;
-    const auto path = settings_path();
     settings.region_hotkey = read_value(path, L"region_hotkey", settings.region_hotkey);
     settings.base_hotkey = read_value(path, L"base_hotkey", settings.base_hotkey);
     settings.target_hotkey = read_value(path, L"target_hotkey", settings.target_hotkey);
@@ -53,11 +73,22 @@ AppSettings load_settings() {
     settings.backend = read_value(path, L"ocr_backend", L"rapid") == L"windows"
                            ? OcrBackend::windows
                            : OcrBackend::rapid;
+    const std::wstring monitor = read_value(path, L"capture_monitor", L"");
+    const auto left = read_integer(path, L"capture_left");
+    const auto top = read_integer(path, L"capture_top");
+    const auto right = read_integer(path, L"capture_right");
+    const auto bottom = read_integer(path, L"capture_bottom");
+    if (!monitor.empty() && left && top && right && bottom && *left >= 0 &&
+        *top >= 0 && *right > *left && *bottom > *top) {
+        settings.capture_region = CaptureRegion{
+            monitor, {static_cast<LONG>(*left), static_cast<LONG>(*top),
+                      static_cast<LONG>(*right), static_cast<LONG>(*bottom)}};
+    }
     return settings;
 }
 
-void save_settings(const AppSettings& settings) {
-    const auto path = settings_path();
+void save_settings_to(const std::filesystem::path& path,
+                      const AppSettings& settings) {
     std::filesystem::create_directories(path.parent_path());
     write_value(path, L"region_hotkey", settings.region_hotkey);
     write_value(path, L"base_hotkey", settings.base_hotkey);
@@ -66,6 +97,25 @@ void save_settings(const AppSettings& settings) {
     write_value(path, L"coordinate_pattern", settings.coordinate_pattern);
     write_value(path, L"ocr_backend",
                 settings.backend == OcrBackend::rapid ? L"rapid" : L"windows");
+    if (settings.capture_region) {
+        const auto& region = *settings.capture_region;
+        write_value(path, L"capture_monitor", region.monitor_device);
+        write_value(path, L"capture_left", std::to_wstring(region.relative.left));
+        write_value(path, L"capture_top", std::to_wstring(region.relative.top));
+        write_value(path, L"capture_right", std::to_wstring(region.relative.right));
+        write_value(path, L"capture_bottom", std::to_wstring(region.relative.bottom));
+    } else {
+        for (const wchar_t* key : {L"capture_monitor", L"capture_left", L"capture_top",
+                                   L"capture_right", L"capture_bottom"}) {
+            remove_value(path, key);
+        }
+    }
+}
+
+AppSettings load_settings() { return load_settings_from(settings_path()); }
+
+void save_settings(const AppSettings& settings) {
+    save_settings_to(settings_path(), settings);
 }
 
 }  // namespace wardogs
