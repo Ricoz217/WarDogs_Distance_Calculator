@@ -123,6 +123,28 @@ int main() {
     rejects([&] { wardogs::validate_unique_hotkeys(duplicate_hotkeys); },
             "a duplicate quick target hotkey is rejected");
 
+    wardogs::HotkeyMatcher matcher{unique_hotkeys};
+    check(matcher.handle_key_event(VK_F8, true, 0) == 0,
+          "a matching key-down selects the first hotkey");
+    check(!matcher.handle_key_event(VK_F8, true, 0),
+          "holding a hotkey does not trigger repeatedly");
+    check(!matcher.handle_key_event(VK_F8, false, 0),
+          "key-up only rearms the hotkey");
+    check(matcher.handle_key_event(VK_F8, true, 0) == 0,
+          "a hotkey triggers again after it is released");
+    check(!matcher.handle_key_event(VK_F9, true, MOD_CONTROL),
+          "extra modifiers do not trigger an unmodified hotkey");
+    matcher.handle_key_event(VK_F9, false, MOD_CONTROL);
+
+    const std::array modifier_hotkeys{wardogs::parse_hotkey(L"F8"),
+                                      wardogs::parse_hotkey(L"Ctrl+F8")};
+    wardogs::HotkeyMatcher modifier_matcher{modifier_hotkeys};
+    check(modifier_matcher.handle_key_event(VK_F8, true, MOD_CONTROL) == 1,
+          "the same key can coexist with a distinct modifier combination");
+    modifier_matcher.handle_key_event(VK_F8, false, MOD_CONTROL);
+    check(modifier_matcher.handle_key_event(VK_F8, true, 0) == 0,
+          "the unmodified form remains independently available");
+
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
         return 1;
