@@ -39,7 +39,7 @@ Hotkey parse_hotkey(std::wstring_view text) {
         begin = end + 1;
     }
     if (parts.empty()) {
-        throw std::invalid_argument("hotkey cannot be empty");
+        throw std::invalid_argument("热键不能为空");
     }
 
     UINT modifiers = MOD_NOREPEAT;
@@ -59,14 +59,14 @@ Hotkey parse_hotkey(std::wstring_view text) {
         }
         if (modifier) {
             if (modifiers & modifier || key) {
-                throw std::invalid_argument("invalid hotkey modifier order");
+                throw std::invalid_argument("修饰键必须写在普通按键之前，且不能重复");
             }
             modifiers |= modifier;
             display_modifiers.push_back(std::move(label));
             continue;
         }
         if (key) {
-            throw std::invalid_argument("hotkey has more than one key");
+            throw std::invalid_argument("每个热键只能包含一个非修饰键");
         }
         if (part.size() == 1 && ((part[0] >= L'A' && part[0] <= L'Z') ||
                                  (part[0] >= L'0' && part[0] <= L'9'))) {
@@ -89,11 +89,11 @@ Hotkey parse_hotkey(std::wstring_view text) {
         else if (part == L"LEFT") key = VK_LEFT;
         else if (part == L"RIGHT") key = VK_RIGHT;
         if (!key) {
-            throw std::invalid_argument("unsupported hotkey key");
+            throw std::invalid_argument("热键包含不支持的按键");
         }
     }
     if (!key) {
-        throw std::invalid_argument("hotkey requires a non-modifier key");
+        throw std::invalid_argument("热键必须包含一个非修饰键");
     }
     std::wstring display;
     for (const auto& item : display_modifiers) {
@@ -126,7 +126,7 @@ void validate_unique_hotkeys(std::span<const Hotkey> hotkeys) {
         for (std::size_t j = i + 1; j < hotkeys.size(); ++j) {
             if (hotkeys[i].modifiers == hotkeys[j].modifiers &&
                 hotkeys[i].virtual_key == hotkeys[j].virtual_key) {
-                throw std::invalid_argument("hotkeys must be different");
+                throw std::invalid_argument("四个热键不能重复");
             }
         }
     }
@@ -210,7 +210,7 @@ void GlobalHotkeyListener::start(std::span<const Hotkey> hotkeys, Callback callb
     validate_unique_hotkeys(hotkeys);
     stop();
     if (Impl::active_instance && Impl::active_instance != impl_.get()) {
-        throw std::runtime_error("another hotkey listener is active in this process");
+        throw std::runtime_error("当前进程中已有一个热键监听器");
     }
     impl_->matcher.emplace(hotkeys);
     impl_->callback = std::move(callback);
@@ -221,7 +221,7 @@ void GlobalHotkeyListener::start(std::span<const Hotkey> hotkeys, Callback callb
         Impl::active_instance = nullptr;
         impl_->matcher.reset();
         impl_->callback = {};
-        throw std::runtime_error("cannot start the shared global hotkey listener");
+        throw std::runtime_error("无法启动共享全局热键监听");
     }
 }
 

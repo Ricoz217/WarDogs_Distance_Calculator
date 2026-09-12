@@ -33,6 +33,16 @@ void rejects(const std::function<void()>& action, const char* message) {
     }
 }
 
+void rejects_with_message(const std::function<void()>& action,
+                          std::string_view expected, const char* message) {
+    try {
+        action();
+        check(false, message);
+    } catch (const std::invalid_argument& error) {
+        check(error.what() == expected, message);
+    }
+}
+
 }  // namespace
 
 int main() {
@@ -101,8 +111,9 @@ int main() {
               chord.modifiers == (MOD_CONTROL | MOD_ALT | MOD_NOREPEAT) &&
               chord.display == L"Ctrl+Alt+Q",
           "modifier chords are normalized");
-    rejects([] { wardogs::parse_hotkey(L"Ctrl+Alt"); },
-            "a hotkey requires a non-modifier key");
+    rejects_with_message([] { wardogs::parse_hotkey(L"Ctrl+Alt"); },
+                         "热键必须包含一个非修饰键",
+                         "a hotkey requires a non-modifier key");
     rejects([] { wardogs::parse_hotkey(L"F25"); },
             "unsupported function keys are rejected");
 
@@ -120,8 +131,9 @@ int main() {
     const std::array duplicate_hotkeys{
         wardogs::parse_hotkey(L"F8"), wardogs::parse_hotkey(L"F9"),
         wardogs::parse_hotkey(L"F10"), wardogs::parse_hotkey(L"F8")};
-    rejects([&] { wardogs::validate_unique_hotkeys(duplicate_hotkeys); },
-            "a duplicate quick target hotkey is rejected");
+    rejects_with_message(
+        [&] { wardogs::validate_unique_hotkeys(duplicate_hotkeys); },
+        "四个热键不能重复", "a duplicate quick target hotkey is rejected");
 
     wardogs::HotkeyMatcher matcher{unique_hotkeys};
     check(matcher.handle_key_event(VK_F8, true, 0) == 0,
