@@ -10,7 +10,6 @@
 #include <windowsx.h>
 #include <winrt/base.h>
 
-#include <QAbstractNativeEventFilter>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -24,6 +23,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
+#include <QMetaObject>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
@@ -466,7 +466,7 @@ struct OcrMessage {
     QString error;
 };
 
-class MainWindow final : public QMainWindow, public QAbstractNativeEventFilter {
+class MainWindow final : public QMainWindow {
 public:
     MainWindow() {
         try { settings_ = wardogs::load_settings(); } catch (...) { settings_ = {}; }
@@ -494,7 +494,6 @@ public:
         else if (saved_region_invalid)
             set_status(QStringLiteral("已保存的 OCR 区域不可用，请重新设置"), true);
         enable_dark_title_bar(reinterpret_cast<HWND>(winId()));
-        qApp->installNativeEventFilter(this);
         try { register_hotkeys(settings_); }
         catch (const std::exception& error) {
             set_status(QStringLiteral("热键启动失败：") + error_text(error), true);
@@ -502,23 +501,8 @@ public:
     }
 
     ~MainWindow() override {
-        qApp->removeNativeEventFilter(this);
         unregister_hotkeys();
         if (worker_.joinable()) worker_.join();
-    }
-
-    bool nativeEventFilter(const QByteArray& event_type, void* message,
-                           qintptr* result) override {
-        if (event_type != "windows_generic_MSG" && event_type != "windows_dispatcher_MSG")
-            return false;
-        auto* native = static_cast<MSG*>(message);
-        if (native->message != WM_HOTKEY) return false;
-        if (native->wParam == 1) begin_region_setup();
-        else if (native->wParam == 2) start_ocr(true);
-        else if (native->wParam == 3) start_ocr(false);
-        else if (native->wParam == 4) begin_quick_target();
-        if (result) *result = 0;
-        return true;
     }
 
 protected:
@@ -535,6 +519,7 @@ private:
     std::optional<wardogs::CaptureRegion> region_;
     std::unique_ptr<wardogs::RapidOcr> rapid_;
     std::unique_ptr<wardogs::WindowsOcr> windows_;
+    wardogs::GlobalHotkeyListener hotkey_listener_;
     std::jthread worker_;
     std::atomic_bool busy_{false};
     SelectionOverlay selector_;
@@ -944,8 +929,7 @@ private:
     }
 
     void unregister_hotkeys() {
-        const HWND window = reinterpret_cast<HWND>(winId());
-        for (int id = 1; id <= 4; ++id) UnregisterHotKey(window, id);
+        hotkey_listener_.stop();
     }
 
     void register_hotkeys(const wardogs::AppSettings& settings) {
@@ -954,15 +938,14 @@ private:
                                 wardogs::parse_hotkey(settings.target_hotkey),
                                 wardogs::parse_hotkey(settings.quick_target_hotkey)};
         wardogs::validate_unique_hotkeys(values);
-        unregister_hotkeys();
-        const HWND window = reinterpret_cast<HWND>(winId());
-        for (std::size_t i = 0; i < values.size(); ++i) {
-            if (!RegisterHotKey(window, static_cast<int>(i + 1), values[i].modifiers,
-                                values[i].virtual_key)) {
-                unregister_hotkeys();
-                throw std::runtime_error("a hotkey is already in use by another program");
-            }
-        }
+        hotkey_listener_.start(values, [this](std::size_t index) {
+            QMetaObject::invokeMethod(this, [this, index] {
+                if (index == 0) begin_region_setup();
+                else if (index == 1) start_ocr(true);
+                else if (index == 2) start_ocr(false);
+                else if (index == 3) begin_quick_target();
+            }, Qt::QueuedConnection);
+        });
     }
 };
 
