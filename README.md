@@ -57,6 +57,8 @@ Windows 游戏坐标 OCR 与射表计算工具。方位角以正北（Y 轴正�
 
 高度数据与主程序分开分发。把下载的 `.wdt` 文件放入程序旁的 `terrain-packs` 目录，重新启动后，只有通过 SHA-256 校验且地图标识正确的数据包才会出现在高度模型选项中。当前识别以下文件：
 
+高度数据来源于 Apollyon 维护的开源社区项目 [WARDOGS Artillery Calculator](https://github.com/apollyon-sys/wardogs-calculator) 所发布的 [Terrain3D 数据](https://assets.wardogs-artillery.com/releases/assets-v1/data/terrain/)。本项目记录上游 manifest 的 SHA-256，并按 manifest 中的 SHA-256 校验每个源区块，再将网格重新量化、压缩为 `.wdt`；没有重新解包游戏地图。详细来源、处理方式和权利说明见 [TERRAIN_DATA_NOTICE.md](TERRAIN_DATA_NOTICE.md)。单独分发高度包时应同时附带该声明文件。
+
 | 地图 | 文件名 | SHA-256 |
 | --- | --- | --- |
 | Bakurani | `bakurani.wdt` | `9c79af2f69df5023f6e2e944329ae80981432e7115832ae801da067bd79bfdde` |
@@ -97,4 +99,4 @@ out\WarDogsDistanceCalculator-v1.2.0-win-x64.zip
 
 ## 许可证
 
-项目源码采用 [MIT License](LICENSE)。随程序分发的 Qt、ONNX Runtime 和 PP-OCRv6 模型遵循各自许可证，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+项目源码采用 [MIT License](LICENSE)。随程序分发的 Qt、ONNX Runtime 和 PP-OCRv6 模型遵循各自许可证，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。地图高度数据的来源及权利说明见 [TERRAIN_DATA_NOTICE.md](TERRAIN_DATA_NOTICE.md)。
