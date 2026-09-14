@@ -1111,8 +1111,8 @@ QWidget#pinnedControlPanel { background:#111827; border:1px solid #475569;
 QToolButton#pinnedLockButton { background:transparent; border:0;
     border-radius:9px; padding:5px; }
 QToolButton#pinnedLockButton:hover { background:#1e293b; }
-QToolButton#pinnedLockButton:checked { background:#164e63; }
-QToolButton#pinnedLockButton:checked:hover { background:#155e75; }
+QToolButton#pinnedLockButton:checked { background:#263449; }
+QToolButton#pinnedLockButton:checked:hover { background:#30415a; }
 QSlider#pinnedOpacitySlider::groove:horizontal { height:5px; background:#334155;
     border-radius:2px; }
 QSlider#pinnedOpacitySlider::sub-page:horizontal { background:#38bdf8;
