@@ -16,11 +16,11 @@
 #include <QLabel>
 #include <QMenu>
 #include <QMouseEvent>
+#include <QPaintEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
 #include <QResizeEvent>
-#include <QRegion>
 #include <QScreen>
 #include <QShowEvent>
 #include <QSignalBlocker>
@@ -112,11 +112,17 @@ public:
     }
 
 protected:
-    void resizeEvent(QResizeEvent* event) override {
-        QMenu::resizeEvent(event);
-        QPainterPath shape;
-        shape.addRoundedRect(QRectF(rect()), 10.0, 10.0);
-        setMask(QRegion(shape.toFillPolygon().toPolygon()));
+    void paintEvent(QPaintEvent* event) override {
+        (void)event;
+        QPainter painter(this);
+        painter.setCompositionMode(QPainter::CompositionMode_Source);
+        painter.fillRect(rect(), Qt::transparent);
+        painter.setCompositionMode(QPainter::CompositionMode_SourceOver);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor(QStringLiteral("#111827")));
+        painter.drawRoundedRect(QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5),
+                                10.0, 10.0);
     }
 
     void showEvent(QShowEvent* event) override {

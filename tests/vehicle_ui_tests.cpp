@@ -4,6 +4,7 @@
 #include <QApplication>
 #include <QContextMenuEvent>
 #include <QHoverEvent>
+#include <QImage>
 #include <QLabel>
 #include <QMenu>
 #include <QMouseEvent>
@@ -150,9 +151,26 @@ int main(int argc, char* argv[]) {
     check(menu && menu->frameGeometry().top() == pinned.frameGeometry().top(),
           "the side menu aligns with the top of the result card");
     check(menu && menu->testAttribute(Qt::WA_TranslucentBackground) &&
-              !menu->mask().isEmpty() &&
-              !menu->mask().contains(QPoint(menu->width() - 1, 0)),
-          "the menu window clips both outer corners instead of exposing a square edge");
+              menu->mask().isEmpty(),
+          "the menu uses an antialiased translucent edge instead of a binary mask");
+    if (menu) {
+        QImage rendered(menu->size(), QImage::Format_ARGB32_Premultiplied);
+        rendered.fill(Qt::transparent);
+        menu->render(&rendered);
+        check(qAlpha(rendered.pixel(0, 0)) == 0 &&
+                  qAlpha(rendered.pixel(rendered.width() - 1, 0)) == 0,
+              "both top menu corners remain transparent");
+        bool has_antialiased_edge = false;
+        for (int y = 0; y < std::min(12, rendered.height()); ++y) {
+            for (int x = 0; x < std::min(12, rendered.width()); ++x) {
+                const int alpha = qAlpha(rendered.pixel(x, y));
+                has_antialiased_edge = has_antialiased_edge ||
+                                       (alpha > 0 && alpha < 255);
+            }
+        }
+        check(has_antialiased_edge,
+              "the rounded menu edge contains antialiased transition pixels");
+    }
     check(menu && qAbs(menu->windowOpacity() - pinned.windowOpacity()) < 0.001,
           "the context menu follows the card opacity");
     if (opacity_slider) {

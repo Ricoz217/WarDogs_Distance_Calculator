@@ -1106,8 +1106,7 @@ QFrame#pinnedFrame { background:#0f172a; border:3px solid transparent;
 QFrame#pinnedFrame[error="true"] { border-color:#ef4444; }
 QMenu#pinnedContextMenu { background:transparent; border:0; padding:0; }
 QMenu#pinnedContextMenu::item { background:transparent; padding:0; margin:0; }
-QWidget#pinnedControlPanel { background:#111827; border:1px solid #475569;
-                             border-radius:10px; }
+QWidget#pinnedControlPanel { background:transparent; border:0; }
 QToolButton#pinnedLockButton { background:transparent; border:0;
     border-radius:9px; padding:5px; }
 QToolButton#pinnedLockButton:hover { background:#1e293b; }
