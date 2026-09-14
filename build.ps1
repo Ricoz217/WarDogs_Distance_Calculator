@@ -2,7 +2,8 @@
 param(
     [ValidateSet('Debug', 'Release')]
     [string]$Configuration = 'Release',
-    [switch]$Package
+    [switch]$Package,
+    [switch]$SkipArchive
 )
 
 $ErrorActionPreference = 'Stop'
@@ -30,7 +31,7 @@ if (-not $projectDeclaration) {
     throw '无法从 CMakeLists.txt 读取项目版本。'
 }
 $projectVersion = $projectDeclaration.Matches[0].Groups[1].Value
-$buildDirectory = Join-Path $projectRoot "out\$($Configuration.ToLowerInvariant())"
+$buildDirectory = Join-Path $projectRoot "build\$($Configuration.ToLowerInvariant())"
 $installDirectory = Join-Path $projectRoot "out\package"
 
 if ($Package -and (Test-Path $installDirectory)) {
@@ -72,9 +73,13 @@ if ($Package) {
         -Destination $qtLicenseDirectory
     Copy-Item -LiteralPath (Join-Path $projectRoot 'third_party\qt\GPL-3.0.txt') `
         -Destination $qtLicenseDirectory
-    $archive = Join-Path $projectRoot "out\WarDogsDistanceCalculator-v$projectVersion-win-x64.zip"
-    Compress-Archive -Path (Join-Path $installDirectory '*') -DestinationPath $archive -Force
-    Write-Host "已生成：$archive"
+    if (-not $SkipArchive) {
+        $archive = Join-Path $projectRoot "out\WarDogsDistanceCalculator-v$projectVersion-win-x64.zip"
+        Compress-Archive -Path (Join-Path $installDirectory '*') -DestinationPath $archive -Force
+        Write-Host "已生成：$archive"
+    } else {
+        Write-Host "实验包位于：$installDirectory"
+    }
 } else {
     Write-Host "程序位于：$(Join-Path $buildDirectory 'WarDogsDistanceCalculator.exe')"
 }
