@@ -5,7 +5,9 @@
 #include <QEvent>
 #include <QContextMenuEvent>
 #include <QFrame>
+#include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QHoverEvent>
 #include <QIcon>
 #include <QImage>
 #include <QLabel>
@@ -15,9 +17,11 @@
 #include <QPainterPath>
 #include <QPixmap>
 #include <QResizeEvent>
+#include <QScreen>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStyle>
+#include <QStyleOptionSlider>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidgetAction>
@@ -30,6 +34,67 @@ constexpr int resize_margin = 8;
 
 QSize minimum_size(bool vehicle) { return vehicle ? QSize{350, 96} : QSize{320, 62}; }
 QSize default_size(bool vehicle) { return vehicle ? QSize{420, 116} : QSize{430, 78}; }
+
+class JumpSlider final : public QSlider {
+public:
+    using QSlider::QSlider;
+
+protected:
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event->button() != Qt::LeftButton) {
+            QSlider::mousePressEvent(event);
+            return;
+        }
+        QStyleOptionSlider option;
+        initStyleOption(&option);
+        const QRect handle = style()->subControlRect(
+            QStyle::CC_Slider, &option, QStyle::SC_SliderHandle, this);
+        if (handle.contains(event->position().toPoint())) {
+            QSlider::mousePressEvent(event);
+            return;
+        }
+        jump_dragging_ = true;
+        set_value_at(event->position().toPoint());
+        event->accept();
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override {
+        if (jump_dragging_ && (event->buttons() & Qt::LeftButton)) {
+            set_value_at(event->position().toPoint());
+            event->accept();
+            return;
+        }
+        QSlider::mouseMoveEvent(event);
+    }
+
+    void mouseReleaseEvent(QMouseEvent* event) override {
+        if (jump_dragging_ && event->button() == Qt::LeftButton) {
+            set_value_at(event->position().toPoint());
+            jump_dragging_ = false;
+            event->accept();
+            return;
+        }
+        QSlider::mouseReleaseEvent(event);
+    }
+
+private:
+    void set_value_at(QPoint position) {
+        QStyleOptionSlider option;
+        initStyleOption(&option);
+        const QRect groove = style()->subControlRect(
+            QStyle::CC_Slider, &option, QStyle::SC_SliderGroove, this);
+        const QRect handle = style()->subControlRect(
+            QStyle::CC_Slider, &option, QStyle::SC_SliderHandle, this);
+        const int slider_minimum = groove.left();
+        const int slider_maximum = groove.right() - handle.width() + 1;
+        const int pointer = position.x() - handle.width() / 2;
+        setSliderPosition(QStyle::sliderValueFromPosition(
+            minimum(), maximum(), pointer - slider_minimum,
+            std::max(1, slider_maximum - slider_minimum), option.upsideDown));
+    }
+
+    bool jump_dragging_{};
+};
 
 QIcon lock_icon(bool locked) {
     QImage image(24, 24, QImage::Format_ARGB32_Premultiplied);
@@ -81,6 +146,7 @@ PinnedResultWindow::PinnedResultWindow(
     setObjectName(QStringLiteral("pinnedWindow"));
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_ShowWithoutActivating);
+    setAttribute(Qt::WA_Hover);
     setMouseTracking(true);
     setCursor(preferences_.locked ? Qt::ArrowCursor : Qt::OpenHandCursor);
     setWindowOpacity(preferences_.opacity_percent / 100.0);
@@ -123,6 +189,7 @@ PinnedResultWindow::PinnedResultWindow(
 void PinnedResultWindow::build_context_menu() {
     context_menu_ = new QMenu(this);
     context_menu_->setObjectName(QStringLiteral("pinnedContextMenu"));
+    context_menu_->setWindowOpacity(preferences_.opacity_percent / 100.0);
 
     auto* panel = new QWidget(context_menu_);
     panel->setObjectName(QStringLiteral("pinnedControlPanel"));
@@ -138,7 +205,7 @@ void PinnedResultWindow::build_context_menu() {
     lock_button_->setIconSize(QSize(22, 22));
     layout->addWidget(lock_button_);
 
-    opacity_slider_ = new QSlider(Qt::Horizontal, panel);
+    opacity_slider_ = new JumpSlider(Qt::Horizontal, panel);
     opacity_slider_->setObjectName(QStringLiteral("pinnedOpacitySlider"));
     opacity_slider_->setRange(Preferences::minimum_opacity_percent,
                               Preferences::maximum_opacity_percent);
@@ -197,6 +264,7 @@ void PinnedResultWindow::set_opacity_percent(int opacity_percent) {
     }
     preferences_.opacity_percent = clamped;
     setWindowOpacity(clamped / 100.0);
+    if (context_menu_) context_menu_->setWindowOpacity(clamped / 100.0);
     if (opacity_slider_) {
         const QSignalBlocker blocker(opacity_slider_);
         opacity_slider_->setValue(clamped);
@@ -218,6 +286,17 @@ QWidget* PinnedResultWindow::result_card(const QString& color, QLabel*& value) {
                              .arg(color));
     layout->addWidget(value);
     return card;
+}
+
+bool PinnedResultWindow::event(QEvent* event) {
+    if (event->type() == QEvent::HoverMove && !dragging_ && resize_edges_.empty()) {
+        const auto* hover = static_cast<QHoverEvent*>(event);
+        setCursor(preferences_.locked
+                      ? Qt::ArrowCursor
+                      : cursor_for_edges(
+                            resize_edges_at(hover->position().toPoint())));
+    }
+    return QWidget::event(event);
 }
 
 void PinnedResultWindow::set_mode(bool vehicle_mode) {
@@ -408,6 +487,29 @@ void PinnedResultWindow::leaveEvent(QEvent* event) {
 void PinnedResultWindow::contextMenuEvent(QContextMenuEvent* event) {
     if (!context_menu_) build_context_menu();
     update_lock_control();
-    context_menu_->popup(event->globalPos());
+    context_menu_->setWindowOpacity(preferences_.opacity_percent / 100.0);
+    context_menu_->popup(context_menu_position());
     event->accept();
+}
+
+QPoint PinnedResultWindow::context_menu_position() const {
+    context_menu_->ensurePolished();
+    context_menu_->adjustSize();
+    constexpr int gap = 8;
+    const QSize menu_size = context_menu_->sizeHint().expandedTo(context_menu_->size());
+    QPoint position = mapToGlobal(
+        QPoint(width() + gap, (height() - menu_size.height()) / 2));
+    QScreen* screen = QGuiApplication::screenAt(mapToGlobal(rect().center()));
+    if (!screen) screen = QGuiApplication::primaryScreen();
+    if (!screen) return position;
+    const QRect available = screen->availableGeometry();
+    if (position.x() + menu_size.width() > available.right() + 1)
+        position.setX(mapToGlobal(QPoint(-menu_size.width() - gap, 0)).x());
+    const int maximum_x = std::max(
+        available.left(), available.right() - menu_size.width() + 1);
+    const int maximum_y = std::max(
+        available.top(), available.bottom() - menu_size.height() + 1);
+    position.setX(std::clamp(position.x(), available.left(), maximum_x));
+    position.setY(std::clamp(position.y(), available.top(), maximum_y));
+    return position;
 }

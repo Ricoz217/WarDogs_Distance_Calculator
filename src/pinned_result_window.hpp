@@ -46,6 +46,7 @@ public:
     }
 
 protected:
+    bool event(QEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
@@ -65,6 +66,7 @@ private:
     void build_context_menu();
     void update_lock_control();
     void notify_preferences_changed();
+    [[nodiscard]] QPoint context_menu_position() const;
 
     std::function<void()> exit_callback_;
     std::function<void(Preferences)> preferences_changed_;

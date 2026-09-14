@@ -3,6 +3,7 @@
 
 #include <QApplication>
 #include <QContextMenuEvent>
+#include <QHoverEvent>
 #include <QLabel>
 #include <QMenu>
 #include <QMouseEvent>
@@ -98,6 +99,21 @@ int main(int argc, char* argv[]) {
     check(exits == 0, "double click cannot exit while the pinned card is locked");
 
     pinned.set_locked(false);
+    const QPointF edge_position(1, pinned.height() / 2.0);
+    QHoverEvent edge_hover(QEvent::HoverMove, edge_position,
+                           edge_position + QPointF(100, 100), QPointF(20, 20),
+                           Qt::NoModifier);
+    QApplication::sendEvent(&pinned, &edge_hover);
+    check(pinned.cursor().shape() == Qt::SizeHorCursor,
+          "an unlocked card shows the horizontal resize cursor at its edge");
+    const QPointF center_position(pinned.width() / 2.0,
+                                  pinned.height() / 2.0);
+    QHoverEvent center_hover(QEvent::HoverMove, center_position,
+                             center_position + QPointF(100, 100), edge_position,
+                             Qt::NoModifier);
+    QApplication::sendEvent(&pinned, &center_hover);
+    check(pinned.cursor().shape() == Qt::OpenHandCursor,
+          "an unlocked card shows the drag cursor in its interior");
     QMouseEvent unlocked_double_click(
         QEvent::MouseButtonDblClick, QPointF(20, 20), QPointF(20, 20),
         Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
@@ -118,7 +134,7 @@ int main(int argc, char* argv[]) {
     auto* menu = pinned.findChild<QMenu*>(QStringLiteral("pinnedContextMenu"));
     const auto* lock_button =
         pinned.findChild<QToolButton*>(QStringLiteral("pinnedLockButton"));
-    const auto* opacity_slider =
+    auto* opacity_slider =
         pinned.findChild<QSlider*>(QStringLiteral("pinnedOpacitySlider"));
     check(menu && lock_button && opacity_slider,
           "right click exposes the lock button and opacity slider");
@@ -127,6 +143,20 @@ int main(int argc, char* argv[]) {
     check(opacity_slider && opacity_slider->minimum() == 35 &&
               opacity_slider->maximum() == 100,
           "opacity slider keeps the card between 35 and 100 percent visible");
+    check(menu && menu->frameGeometry().left() > pinned.frameGeometry().right(),
+          "the context menu is anchored beside the card instead of at the pointer");
+    check(menu && qAbs(menu->windowOpacity() - pinned.windowOpacity()) < 0.001,
+          "the context menu follows the card opacity");
+    if (opacity_slider) {
+        opacity_slider->resize(200, 34);
+        opacity_slider->setValue(100);
+        QMouseEvent track_click(
+            QEvent::MouseButtonPress, QPointF(100, 17), QPointF(100, 17),
+            Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+        QApplication::sendEvent(opacity_slider, &track_click);
+        check(opacity_slider->value() >= 65 && opacity_slider->value() <= 70,
+              "clicking the slider track jumps directly to that position");
+    }
     if (menu) menu->hide();
 
     std::cout << "All vehicle UI tests passed\n" << std::flush;
