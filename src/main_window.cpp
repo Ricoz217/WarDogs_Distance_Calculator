@@ -48,6 +48,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -130,6 +131,72 @@ QIcon weapon_mode_icon(bool vehicle_mode) {
         painter.drawLine(QPointF(9, 19), QPointF(17.5, 6));
         painter.drawLine(QPointF(5, 20), QPointF(15, 20));
         painter.drawLine(QPointF(10, 19.5), QPointF(14.5, 14));
+    }
+    return QIcon(image);
+}
+
+enum class UiGlyph { location, target, scan, refresh, clear, settings };
+
+QIcon ui_icon(UiGlyph glyph) {
+    QPixmap image(22, 22);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QColor color(QStringLiteral("#d7e1ee"));
+    painter.setPen(QPen(color, 1.7, Qt::SolidLine, Qt::RoundCap,
+                        Qt::RoundJoin));
+    painter.setBrush(Qt::NoBrush);
+
+    switch (glyph) {
+    case UiGlyph::location:
+        painter.drawEllipse(QRectF(6.0, 3.0, 10.0, 10.0));
+        painter.drawEllipse(QPointF(11.0, 8.0), 1.7, 1.7);
+        painter.drawLine(QPointF(7.4, 11.5), QPointF(11.0, 19.0));
+        painter.drawLine(QPointF(14.6, 11.5), QPointF(11.0, 19.0));
+        break;
+    case UiGlyph::target:
+        painter.drawEllipse(QPointF(11.0, 11.0), 6.0, 6.0);
+        painter.drawEllipse(QPointF(11.0, 11.0), 2.2, 2.2);
+        painter.drawLine(QPointF(11.0, 2.0), QPointF(11.0, 6.0));
+        painter.drawLine(QPointF(11.0, 16.0), QPointF(11.0, 20.0));
+        painter.drawLine(QPointF(2.0, 11.0), QPointF(6.0, 11.0));
+        painter.drawLine(QPointF(16.0, 11.0), QPointF(20.0, 11.0));
+        break;
+    case UiGlyph::scan:
+        painter.drawLine(QPointF(4.0, 8.0), QPointF(4.0, 4.0));
+        painter.drawLine(QPointF(4.0, 4.0), QPointF(8.0, 4.0));
+        painter.drawLine(QPointF(14.0, 4.0), QPointF(18.0, 4.0));
+        painter.drawLine(QPointF(18.0, 4.0), QPointF(18.0, 8.0));
+        painter.drawLine(QPointF(4.0, 14.0), QPointF(4.0, 18.0));
+        painter.drawLine(QPointF(4.0, 18.0), QPointF(8.0, 18.0));
+        painter.drawLine(QPointF(14.0, 18.0), QPointF(18.0, 18.0));
+        painter.drawLine(QPointF(18.0, 18.0), QPointF(18.0, 14.0));
+        painter.drawLine(QPointF(6.0, 11.0), QPointF(16.0, 11.0));
+        break;
+    case UiGlyph::refresh:
+        painter.drawArc(QRectF(4.0, 4.0, 14.0, 14.0), 35 * 16, 270 * 16);
+        painter.drawLine(QPointF(16.8, 4.8), QPointF(17.9, 9.1));
+        painter.drawLine(QPointF(16.8, 4.8), QPointF(12.6, 5.8));
+        break;
+    case UiGlyph::clear:
+        painter.drawRoundedRect(QRectF(6.0, 7.0, 10.0, 11.0), 1.5, 1.5);
+        painter.drawLine(QPointF(5.0, 6.0), QPointF(17.0, 6.0));
+        painter.drawLine(QPointF(8.5, 3.8), QPointF(13.5, 3.8));
+        painter.drawLine(QPointF(9.0, 10.0), QPointF(9.0, 15.0));
+        painter.drawLine(QPointF(13.0, 10.0), QPointF(13.0, 15.0));
+        break;
+    case UiGlyph::settings:
+        painter.drawEllipse(QPointF(11.0, 11.0), 3.0, 3.0);
+        painter.drawEllipse(QPointF(11.0, 11.0), 7.0, 7.0);
+        for (int index = 0; index < 8; ++index) {
+            constexpr double pi = 3.14159265358979323846;
+            const double angle = index * pi / 4.0;
+            painter.drawLine(QPointF(11.0 + std::cos(angle) * 7.0,
+                                     11.0 + std::sin(angle) * 7.0),
+                             QPointF(11.0 + std::cos(angle) * 9.0,
+                                     11.0 + std::sin(angle) * 9.0));
+        }
+        break;
     }
     return QIcon(image);
 }
@@ -233,8 +300,8 @@ private:
         app_frame_->setObjectName(QStringLiteral("appFrame"));
         app_frame_->setProperty("error", false);
         auto* root = new QVBoxLayout(app_frame_);
-        root->setContentsMargins(20, 16, 20, 16);
-        root->setSpacing(10);
+        root->setContentsMargins(22, 18, 22, 18);
+        root->setSpacing(12);
 
         auto* heading = new QHBoxLayout;
         auto* title = new QLabel(QStringLiteral("射表计算"));
@@ -255,14 +322,12 @@ private:
         heading->addWidget(mode_button_);
         heading->addWidget(pin_button_);
         root->addLayout(heading);
-        auto* subtitle = new QLabel(
-            QStringLiteral("OCR 热键和手动输入共用同一套计算逻辑"));
-        subtitle->setObjectName(QStringLiteral("muted"));
-        root->addWidget(subtitle);
         update_mode_button();
 
         terrain_group_ = new QGroupBox(QStringLiteral("高度模型"));
         auto* terrain_layout = new QVBoxLayout(terrain_group_);
+        terrain_layout->setContentsMargins(14, 20, 14, 14);
+        terrain_layout->setSpacing(8);
         terrain_selector_ = new QComboBox;
         terrain_selector_->addItem(QStringLiteral("等高假设（无需地图包）"));
         for (const auto& installed : terrain_discovery_.installed)
@@ -279,7 +344,8 @@ private:
 
         auto* coordinates = new QGroupBox(QStringLiteral("坐标"));
         auto* coordinate_layout = new QVBoxLayout(coordinates);
-        coordinate_layout->setSpacing(7);
+        coordinate_layout->setContentsMargins(14, 20, 14, 14);
+        coordinate_layout->setSpacing(8);
         base_summary_ = new QLabel;
         target_summary_ = new QLabel;
         coordinate_layout->addWidget(base_summary_);
@@ -288,14 +354,18 @@ private:
         base_input_ = new QLineEdit;
         base_input_->setPlaceholderText(
             QStringLiteral("基准点：x12.34, y56.78 或 12.34 56.78"));
-        auto* manual_base = new QPushButton(QStringLiteral("手动设为基准点"));
+        auto* manual_base = new QPushButton(QStringLiteral("设为基准"));
+        manual_base->setIcon(ui_icon(UiGlyph::location));
+        manual_base->setProperty("quiet", true);
         base_row->addWidget(base_input_, 1);
         base_row->addWidget(manual_base);
         coordinate_layout->addLayout(base_row);
         auto* target_row = new QHBoxLayout;
         target_input_ = new QLineEdit;
         target_input_->setPlaceholderText(QStringLiteral("目标点：输入后立即计算"));
-        auto* manual_target = new QPushButton(QStringLiteral("手动计算目标点"));
+        auto* manual_target = new QPushButton(QStringLiteral("计算目标"));
+        manual_target->setIcon(ui_icon(UiGlyph::target));
+        manual_target->setProperty("quiet", true);
         target_row->addWidget(target_input_, 1);
         target_row->addWidget(manual_target);
         coordinate_layout->addLayout(target_row);
@@ -307,6 +377,8 @@ private:
 
         mortar_result_group_ = new QGroupBox(QStringLiteral("计算结果"));
         auto* result_layout = new QVBoxLayout(mortar_result_group_);
+        result_layout->setContentsMargins(14, 20, 14, 14);
+        result_layout->setSpacing(8);
         auto* cards = new QHBoxLayout;
         cards->setSpacing(12);
         cards->addWidget(result_card(QStringLiteral("射程"),
@@ -324,6 +396,8 @@ private:
         vehicle_result_group_->setObjectName(QStringLiteral("vehicleResultGroup"));
         vehicle_result_group_->setProperty("error", false);
         auto* vehicle_results = new QVBoxLayout(vehicle_result_group_);
+        vehicle_results->setContentsMargins(10, 18, 10, 10);
+        vehicle_results->setSpacing(7);
         low_solution_ = new VehicleSolutionWidget(wardogs::Arc::low);
         high_solution_ = new VehicleSolutionWidget(wardogs::Arc::high);
         vehicle_results->addWidget(low_solution_);
@@ -337,7 +411,8 @@ private:
 
         auto* ocr = new QGroupBox(QStringLiteral("OCR 与热键"));
         auto* ocr_layout = new QVBoxLayout(ocr);
-        ocr_layout->setSpacing(7);
+        ocr_layout->setContentsMargins(14, 20, 14, 14);
+        ocr_layout->setSpacing(8);
         engine_summary_ = new QLabel;
         region_summary_ = new QLabel(QStringLiteral("OCR 区域：尚未设置"));
         ocr_layout->addWidget(engine_summary_);
@@ -348,10 +423,21 @@ private:
         base_button_ = new QPushButton;
         target_button_ = new QPushButton;
         quick_target_button_ = new QPushButton;
-        auto* settings_button = new QPushButton(QStringLiteral("设置"));
+        auto* settings_button = new QPushButton;
+        settings_button->setObjectName(QStringLiteral("iconButton"));
+        settings_button->setIcon(ui_icon(UiGlyph::settings));
+        settings_button->setIconSize(QSize(20, 20));
+        settings_button->setFixedWidth(38);
+        settings_button->setToolTip(QStringLiteral("偏好设置"));
+        settings_button->setAccessibleName(QStringLiteral("打开偏好设置"));
+        region_button_->setIcon(ui_icon(UiGlyph::scan));
+        base_button_->setIcon(ui_icon(UiGlyph::location));
+        target_button_->setIcon(ui_icon(UiGlyph::target));
+        target_button_->setProperty("primary", true);
+        quick_target_button_->setIcon(ui_icon(UiGlyph::target));
         for (auto* button : {region_button_, base_button_, target_button_,
                              quick_target_button_, settings_button})
-            actions->addWidget(button, 1);
+            actions->addWidget(button, button == settings_button ? 0 : 1);
         ocr_layout->addLayout(actions);
         ocr_text_ = new QLabel(QStringLiteral("OCR 原文：—"));
         ocr_text_->setObjectName(QStringLiteral("muted"));
@@ -386,6 +472,9 @@ private:
     QGroupBox* build_calibration_group() {
         auto* group = new QGroupBox(QStringLiteral("当前炮位 · 两发校准"));
         auto* layout = new QGridLayout(group);
+        layout->setContentsMargins(14, 20, 14, 14);
+        layout->setHorizontalSpacing(8);
+        layout->setVerticalSpacing(7);
         layout->addWidget(new QLabel, 0, 0);
         layout->addWidget(new QLabel(QStringLiteral("计划瞄准点")), 0, 1);
         layout->addWidget(new QLabel(QStringLiteral("实际落点")), 0, 2);
@@ -408,10 +497,18 @@ private:
             layout->addWidget(impact, row, 2);
             layout->addWidget(arc, row, 3);
         }
-        calibration_ocr_ = new QPushButton(QStringLiteral("OCR 录入下一发"));
-        calibration_manual_ = new QPushButton(QStringLiteral("手动录入下一发"));
+        calibration_ocr_ = new QPushButton(QStringLiteral("OCR 下一发"));
+        calibration_ocr_->setIcon(ui_icon(UiGlyph::scan));
+        calibration_ocr_->setProperty("primary", true);
+        calibration_manual_ = new QPushButton(QStringLiteral("手动下一发"));
+        calibration_manual_->setIcon(ui_icon(UiGlyph::location));
+        calibration_manual_->setProperty("quiet", true);
         auto* recalculate = new QPushButton(QStringLiteral("重新计算"));
+        recalculate->setIcon(ui_icon(UiGlyph::refresh));
+        recalculate->setProperty("quiet", true);
         auto* clear = new QPushButton(QStringLiteral("清除校准"));
+        clear->setIcon(ui_icon(UiGlyph::clear));
+        clear->setProperty("quiet", true);
         layout->addWidget(calibration_ocr_, 3, 0, 1, 2);
         layout->addWidget(calibration_manual_, 3, 2, 1, 2);
         layout->addWidget(recalculate, 4, 0, 1, 2);
@@ -1097,13 +1194,17 @@ private:
 };
 
 constexpr auto style_sheet = R"(
-QWidget { color:#e5e7eb; font-family:"Microsoft YaHei UI"; font-size:13px; }
-QMainWindow,QDialog { background:#111827; }
-QFrame#appFrame { background:#111827; border:3px solid transparent; }
+QWidget { color:#dbe4ef; font-family:"Microsoft YaHei UI"; font-size:13px; }
+QMainWindow,QDialog { background:#0b1018; }
+QFrame#appFrame { background:#0b1018; border:3px solid transparent; }
 QFrame#appFrame[error="true"] { border-color:#ef4444; }
 QFrame#pinnedFrame { background:#0f172a; border:3px solid transparent;
                      border-radius:10px; }
 QFrame#pinnedFrame[error="true"] { border-color:#ef4444; }
+QFrame#pinnedFrame QFrame#resultCard,
+QFrame#pinnedFrame QFrame#vehicleSolutionCard {
+    background:#0b1220; border:1px solid #334155; border-radius:8px;
+}
 QWidget#pinnedContextMenu { background:transparent; }
 QToolButton#pinnedLockButton { background:transparent; border:0;
     border-radius:9px; padding:5px; }
@@ -1118,19 +1219,18 @@ QSlider#pinnedOpacitySlider::handle:horizontal { background:#e2e8f0;
     border:1px solid #64748b; width:15px; margin:-6px 0; border-radius:7px; }
 QSlider#pinnedOpacitySlider::handle:horizontal:hover { background:#f8fafc;
     border-color:#38bdf8; }
-QLabel#title,QLabel#dialogTitle { color:#f8fafc; font-size:26px; font-weight:700; }
-QLabel#dialogTitle { font-size:23px; }
-QLabel#muted { color:#94a3b8; }
-QLabel#status { color:#7dd3fc; padding:7px 2px; }
+QLabel#title,QLabel#dialogTitle { color:#f4f7fb; font-size:25px; font-weight:700; }
+QLabel#dialogTitle { font-size:22px; }
+QLabel#muted { color:#8190a3; }
+QLabel#status { color:#75c9e8; padding:6px 4px 2px 4px; }
 QLabel#status[error="true"] { color:#fca5a5; }
-QLabel#resultCaption { color:#94a3b8; font-size:13px; font-weight:600; }
-QLabel#rawResult { color:#64748b; font-size:12px; padding:3px; }
-QFrame#resultCard { background:#0b1220; border:1px solid #334155; border-radius:8px; }
-QFrame#vehicleSolutionCard { background:#0b1220; border:1px solid #334155;
-                             border-radius:8px; }
-QFrame#vehicleSolutionCard[unavailable="true"] { border-color:#64748b; }
-QLabel#solutionArc { color:#94a3b8; font-size:13px; font-weight:600; }
-QLabel#solutionMetricCaption { color:#64748b; font-size:11px; }
+QLabel#resultCaption { color:#8190a3; font-size:12px; font-weight:600; }
+QLabel#rawResult { color:#66768a; font-size:12px; padding:3px; }
+QFrame#resultCard { background:#0d1521; border:0; border-radius:10px; }
+QFrame#vehicleSolutionCard { background:#0d1521; border:0; border-radius:10px; }
+QFrame#vehicleSolutionCard[unavailable="true"] { background:#171b25; }
+QLabel#solutionArc { color:#8291a5; font-size:12px; font-weight:600; }
+QLabel#solutionMetricCaption { color:#66768a; font-size:11px; }
 QLabel#solutionDistance,QLabel#solutionBearing,QLabel#solutionMil {
     font-family:"Bahnschrift"; font-size:25px; font-weight:700; }
 QLabel#solutionDistance { color:#fbbf24; }
@@ -1138,37 +1238,45 @@ QLabel#solutionBearing { color:#67e8f9; }
 QLabel#solutionMil { color:#c4b5fd; }
 QLabel#solutionMil[unavailable="true"] { color:#fca5a5; font-size:19px; }
 QGroupBox#vehicleResultGroup[error="true"] { border:2px solid #ef4444; }
-QGroupBox { background:#0f172a; border:1px solid #334155; border-radius:8px;
-            margin-top:9px; padding-top:10px; font-weight:600; }
-QGroupBox::title { subcontrol-origin:margin; left:10px; padding:0 5px; color:#f1f5f9; }
-QLineEdit,QPlainTextEdit,QKeySequenceEdit,QComboBox { background:#0b1220;
-    border:1px solid #475569; border-radius:5px; padding:7px; color:#f8fafc;
+QGroupBox { background:#111925; border:0; border-radius:12px;
+            margin-top:10px; padding-top:12px; font-weight:400; }
+QGroupBox::title { subcontrol-origin:margin; left:13px; padding:0 3px;
+                   color:#e8eef6; font-weight:700; }
+QLineEdit,QPlainTextEdit,QKeySequenceEdit,QComboBox { background:#0c1420;
+    border:1px solid transparent; border-radius:8px; padding:8px 9px; color:#f3f6fa;
     selection-background-color:#2563eb; }
-QLineEdit:focus,QPlainTextEdit:focus,QKeySequenceEdit:focus,QComboBox:focus { border-color:#3b82f6; }
+QLineEdit:hover,QPlainTextEdit:hover,QKeySequenceEdit:hover,QComboBox:hover {
+    background:#0f1927;
+}
+QLineEdit:focus,QPlainTextEdit:focus,QKeySequenceEdit:focus,QComboBox:focus {
+    background:#0f1927; border-color:#3569ae;
+}
 QComboBox::drop-down { border:0; width:28px; }
-QComboBox QAbstractItemView { background:#0f172a; border:1px solid #475569;
-    color:#f8fafc; selection-background-color:#1d4ed8; padding:4px; }
-QPushButton { background:#1e3a5f; border:1px solid #2563eb; border-radius:5px;
-              padding:7px 10px; min-height:18px; }
-QPushButton:hover { background:#1d4ed8; }
-QPushButton:pressed { background:#1e40af; }
-QPushButton[primary="true"] { background:#1d4ed8; }
-QPushButton[primary="true"]:hover { background:#2563eb; }
+QComboBox QAbstractItemView { background:#131d2b; border:0;
+    color:#f3f6fa; selection-background-color:#1e3e75; padding:5px; }
+QPushButton { background:#192638; border:0; border-radius:8px;
+              padding:8px 11px; min-height:18px; outline:0; }
+QPushButton:hover { background:#23344a; }
+QPushButton:pressed { background:#182f55; }
+QPushButton[quiet="true"] { background:#151f2e; color:#c8d3df; }
+QPushButton[quiet="true"]:hover { background:#202f43; color:#f2f6fb; }
+QPushButton[primary="true"] { background:#1e3e75; color:#f7f9fc; }
+QPushButton[primary="true"]:hover { background:#285297; }
 QPushButton#arcToggle { min-width:58px; padding-left:8px; padding-right:8px;
-    background:#0f172a; color:#cbd5e1; border-color:#475569; }
-QPushButton#arcToggle:hover { background:#1e3a5f; }
-QPushButton#arcToggle[highlighted="true"] { background:#1d4ed8; color:#f8fafc;
-    border-color:#60a5fa; font-weight:700; }
-QPushButton#arcToggle[highlighted="true"]:hover {
-    background:#2563eb; border-color:#93c5fd; }
-QPushButton#arcToggle[highlighted="true"]:pressed { background:#1e40af; }
-QPushButton#iconButton { background:#0f172a; border:1px solid #334155;
-                         border-radius:6px; padding:5px; min-height:0; }
-QPushButton#iconButton:hover { background:#1e3a5f; border-color:#3b82f6; }
-QPushButton#iconButton:pressed { background:#1e40af; }
-QPushButton:disabled { color:#94a3b8; background:#334155; border-color:#475569; }
-QScrollBar:vertical { background:#0b1220; width:10px; margin:0; }
-QScrollBar::handle:vertical { background:#475569; border-radius:4px; min-height:24px; }
+    background:#0c1420; color:#9aa8b8; }
+QPushButton#arcToggle:hover { background:#192638; color:#e6edf5; }
+QPushButton#arcToggle[highlighted="true"] { background:#1e3e75; color:#f8fafc;
+    font-weight:700; }
+QPushButton#arcToggle[highlighted="true"]:hover { background:#285297; }
+QPushButton#arcToggle[highlighted="true"]:pressed { background:#183563; }
+QPushButton#iconButton { background:transparent; border:0;
+                         border-radius:9px; padding:6px; min-height:0; }
+QPushButton#iconButton:hover { background:#192638; }
+QPushButton#iconButton:pressed { background:#1e3e75; }
+QPushButton:disabled { color:#667487; background:#141c28; }
+QToolTip { color:#eef3f8; background:#1a2636; border:0; padding:5px; }
+QScrollBar:vertical { background:transparent; width:9px; margin:0; }
+QScrollBar::handle:vertical { background:#334459; border-radius:4px; min-height:24px; }
 QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical { height:0; }
 )";
 
