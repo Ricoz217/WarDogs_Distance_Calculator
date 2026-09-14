@@ -22,11 +22,13 @@
 #include <QResizeEvent>
 #include <QRegion>
 #include <QScreen>
+#include <QShowEvent>
 #include <QSignalBlocker>
 #include <QSlider>
 #include <QStyle>
 #include <QStyleOptionSlider>
 #include <QToolButton>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidgetAction>
 
@@ -104,6 +106,11 @@ class RoundedMenu final : public QMenu {
 public:
     using QMenu::QMenu;
 
+    void set_effective_opacity(qreal opacity) {
+        effective_opacity_ = opacity;
+        setWindowOpacity(effective_opacity_);
+    }
+
 protected:
     void resizeEvent(QResizeEvent* event) override {
         QMenu::resizeEvent(event);
@@ -111,7 +118,22 @@ protected:
         shape.addRoundedRect(QRectF(rect()), 10.0, 10.0);
         setMask(QRegion(shape.toFillPolygon().toPolygon()));
     }
+
+    void showEvent(QShowEvent* event) override {
+        QMenu::showEvent(event);
+        setWindowOpacity(effective_opacity_);
+        QTimer::singleShot(0, this, [this] {
+            if (isVisible()) setWindowOpacity(effective_opacity_);
+        });
+    }
+
+private:
+    qreal effective_opacity_{1.0};
 };
+
+void set_menu_opacity(QMenu* menu, qreal opacity) {
+    static_cast<RoundedMenu*>(menu)->set_effective_opacity(opacity);
+}
 
 QIcon lock_icon(bool locked) {
     QImage image(24, 24, QImage::Format_ARGB32_Premultiplied);
@@ -208,19 +230,19 @@ void PinnedResultWindow::build_context_menu() {
     context_menu_->setObjectName(QStringLiteral("pinnedContextMenu"));
     context_menu_->setAttribute(Qt::WA_TranslucentBackground);
     context_menu_->setWindowFlag(Qt::NoDropShadowWindowHint);
-    context_menu_->setWindowOpacity(preferences_.opacity_percent / 100.0);
+    set_menu_opacity(context_menu_, preferences_.opacity_percent / 100.0);
 
     auto* panel = new QWidget(context_menu_);
     panel->setObjectName(QStringLiteral("pinnedControlPanel"));
     auto* layout = new QHBoxLayout(panel);
-    layout->setContentsMargins(6, 5, 8, 5);
-    layout->setSpacing(10);
+    layout->setContentsMargins(1, 1, 8, 1);
+    layout->setSpacing(8);
 
     lock_button_ = new QToolButton(panel);
     lock_button_->setObjectName(QStringLiteral("pinnedLockButton"));
     lock_button_->setCheckable(true);
     lock_button_->setAutoRaise(false);
-    lock_button_->setFixedSize(36, 34);
+    lock_button_->setFixedSize(42, 40);
     lock_button_->setIconSize(QSize(22, 22));
     layout->addWidget(lock_button_);
 
@@ -283,7 +305,7 @@ void PinnedResultWindow::set_opacity_percent(int opacity_percent) {
     }
     preferences_.opacity_percent = clamped;
     setWindowOpacity(clamped / 100.0);
-    if (context_menu_) context_menu_->setWindowOpacity(clamped / 100.0);
+    if (context_menu_) set_menu_opacity(context_menu_, clamped / 100.0);
     if (opacity_slider_) {
         const QSignalBlocker blocker(opacity_slider_);
         opacity_slider_->setValue(clamped);
@@ -531,8 +553,10 @@ void PinnedResultWindow::leaveEvent(QEvent* event) {
 void PinnedResultWindow::contextMenuEvent(QContextMenuEvent* event) {
     if (!context_menu_) build_context_menu();
     update_lock_control();
-    context_menu_->setWindowOpacity(preferences_.opacity_percent / 100.0);
+    const qreal opacity = preferences_.opacity_percent / 100.0;
+    set_menu_opacity(context_menu_, opacity);
     context_menu_->popup(context_menu_position());
+    set_menu_opacity(context_menu_, opacity);
     event->accept();
 }
 
@@ -541,8 +565,7 @@ QPoint PinnedResultWindow::context_menu_position() const {
     context_menu_->adjustSize();
     constexpr int gap = 2;
     const QSize menu_size = context_menu_->sizeHint().expandedTo(context_menu_->size());
-    QPoint position = mapToGlobal(
-        QPoint(width() + gap, (height() - menu_size.height()) / 2));
+    QPoint position = mapToGlobal(QPoint(width() + gap, 0));
     QScreen* screen = QGuiApplication::screenAt(mapToGlobal(rect().center()));
     if (!screen) screen = QGuiApplication::primaryScreen();
     if (!screen) return position;

@@ -147,6 +147,8 @@ int main(int argc, char* argv[]) {
           "the context menu is anchored beside the card instead of at the pointer");
     check(menu && menu->frameGeometry().left() - pinned.frameGeometry().right() <= 3,
           "the side menu visually joins the card without a wide gap");
+    check(menu && menu->frameGeometry().top() == pinned.frameGeometry().top(),
+          "the side menu aligns with the top of the result card");
     check(menu && menu->testAttribute(Qt::WA_TranslucentBackground) &&
               !menu->mask().isEmpty() &&
               !menu->mask().contains(QPoint(menu->width() - 1, 0)),
@@ -163,7 +165,17 @@ int main(int argc, char* argv[]) {
         check(opacity_slider->value() >= 65 && opacity_slider->value() <= 70,
               "clicking the slider track jumps directly to that position");
     }
-    if (menu) menu->hide();
+    if (menu) {
+        menu->hide();
+        pinned.set_opacity_percent(42);
+        menu->setWindowOpacity(1.0);
+        QContextMenuEvent reopened_menu_event(
+            QContextMenuEvent::Mouse, QPoint(20, 20), QPoint(20, 20));
+        QApplication::sendEvent(&pinned, &reopened_menu_event);
+        check(qAbs(menu->windowOpacity() - 0.42) < 0.001,
+              "a reopened menu reapplies the current card opacity");
+        menu->hide();
+    }
 
     std::cout << "All vehicle UI tests passed\n" << std::flush;
     // Qt's Windows offscreen plugin can wait indefinitely during process teardown.

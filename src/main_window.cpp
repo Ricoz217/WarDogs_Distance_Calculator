@@ -1108,10 +1108,11 @@ QMenu#pinnedContextMenu { background:transparent; border:0; padding:0; }
 QMenu#pinnedContextMenu::item { background:transparent; padding:0; margin:0; }
 QWidget#pinnedControlPanel { background:#111827; border:1px solid #475569;
                              border-radius:10px; }
-QToolButton#pinnedLockButton { background:#0f172a; border:1px solid #475569;
-    border-radius:6px; padding:4px; }
-QToolButton#pinnedLockButton:hover { background:#1e293b; border-color:#64748b; }
-QToolButton#pinnedLockButton:checked { background:#164e63; border-color:#22d3ee; }
+QToolButton#pinnedLockButton { background:transparent; border:0;
+    border-radius:9px; padding:5px; }
+QToolButton#pinnedLockButton:hover { background:#1e293b; }
+QToolButton#pinnedLockButton:checked { background:#164e63; }
+QToolButton#pinnedLockButton:checked:hover { background:#155e75; }
 QSlider#pinnedOpacitySlider::groove:horizontal { height:5px; background:#334155;
     border-radius:2px; }
 QSlider#pinnedOpacitySlider::sub-page:horizontal { background:#38bdf8;
