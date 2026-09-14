@@ -132,13 +132,16 @@ int main(int argc, char* argv[]) {
     QContextMenuEvent menu_event(QContextMenuEvent::Mouse, QPoint(10, 10),
                                  QPoint(10, 10));
     QApplication::sendEvent(&pinned, &menu_event);
-    auto* menu = pinned.findChild<QMenu*>(QStringLiteral("pinnedContextMenu"));
+    auto* menu = pinned.findChild<QWidget*>(QStringLiteral("pinnedContextMenu"));
     const auto* lock_button =
         pinned.findChild<QToolButton*>(QStringLiteral("pinnedLockButton"));
     auto* opacity_slider =
         pinned.findChild<QSlider*>(QStringLiteral("pinnedOpacitySlider"));
     check(menu && lock_button && opacity_slider,
           "right click exposes the lock button and opacity slider");
+    check(menu && qobject_cast<QMenu*>(menu) == nullptr &&
+              menu->windowType() == Qt::Popup,
+          "side controls use the same translucent QWidget approach as the card");
     check(lock_button && lock_button->text().isEmpty(),
           "lock control is icon-only");
     check(opacity_slider && opacity_slider->minimum() == 35 &&

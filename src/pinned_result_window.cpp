@@ -14,7 +14,6 @@
 #include <QIcon>
 #include <QImage>
 #include <QLabel>
-#include <QMenu>
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
@@ -30,7 +29,6 @@
 #include <QToolButton>
 #include <QTimer>
 #include <QVBoxLayout>
-#include <QWidgetAction>
 
 #include <algorithm>
 
@@ -102,9 +100,13 @@ private:
     bool jump_dragging_{};
 };
 
-class RoundedMenu final : public QMenu {
+class RoundedPopup final : public QWidget {
 public:
-    using QMenu::QMenu;
+    explicit RoundedPopup(QWidget* parent)
+        : QWidget(parent, Qt::Popup | Qt::FramelessWindowHint |
+                              Qt::NoDropShadowWindowHint) {
+        setAttribute(Qt::WA_TranslucentBackground);
+    }
 
     void set_effective_opacity(qreal opacity) {
         effective_opacity_ = opacity;
@@ -126,7 +128,7 @@ protected:
     }
 
     void showEvent(QShowEvent* event) override {
-        QMenu::showEvent(event);
+        QWidget::showEvent(event);
         setWindowOpacity(effective_opacity_);
         QTimer::singleShot(0, this, [this] {
             if (isVisible()) setWindowOpacity(effective_opacity_);
@@ -137,8 +139,8 @@ private:
     qreal effective_opacity_{1.0};
 };
 
-void set_menu_opacity(QMenu* menu, qreal opacity) {
-    static_cast<RoundedMenu*>(menu)->set_effective_opacity(opacity);
+void set_popup_opacity(QWidget* popup, qreal opacity) {
+    static_cast<RoundedPopup*>(popup)->set_effective_opacity(opacity);
 }
 
 QIcon lock_icon(bool locked) {
@@ -232,19 +234,15 @@ PinnedResultWindow::PinnedResultWindow(
 }
 
 void PinnedResultWindow::build_context_menu() {
-    context_menu_ = new RoundedMenu(this);
+    context_menu_ = new RoundedPopup(this);
     context_menu_->setObjectName(QStringLiteral("pinnedContextMenu"));
-    context_menu_->setAttribute(Qt::WA_TranslucentBackground);
-    context_menu_->setWindowFlag(Qt::NoDropShadowWindowHint);
-    set_menu_opacity(context_menu_, preferences_.opacity_percent / 100.0);
+    set_popup_opacity(context_menu_, preferences_.opacity_percent / 100.0);
 
-    auto* panel = new QWidget(context_menu_);
-    panel->setObjectName(QStringLiteral("pinnedControlPanel"));
-    auto* layout = new QHBoxLayout(panel);
+    auto* layout = new QHBoxLayout(context_menu_);
     layout->setContentsMargins(1, 1, 8, 1);
     layout->setSpacing(8);
 
-    lock_button_ = new QToolButton(panel);
+    lock_button_ = new QToolButton(context_menu_);
     lock_button_->setObjectName(QStringLiteral("pinnedLockButton"));
     lock_button_->setCheckable(true);
     lock_button_->setAutoRaise(false);
@@ -252,7 +250,7 @@ void PinnedResultWindow::build_context_menu() {
     lock_button_->setIconSize(QSize(22, 22));
     layout->addWidget(lock_button_);
 
-    opacity_slider_ = new JumpSlider(Qt::Horizontal, panel);
+    opacity_slider_ = new JumpSlider(Qt::Horizontal, context_menu_);
     opacity_slider_->setObjectName(QStringLiteral("pinnedOpacitySlider"));
     opacity_slider_->setRange(Preferences::minimum_opacity_percent,
                               Preferences::maximum_opacity_percent);
@@ -262,10 +260,6 @@ void PinnedResultWindow::build_context_menu() {
         QStringLiteral("卡片透明度：%1%").arg(preferences_.opacity_percent));
     opacity_slider_->setAccessibleName(QStringLiteral("结果卡片透明度"));
     layout->addWidget(opacity_slider_);
-
-    auto* action = new QWidgetAction(context_menu_);
-    action->setDefaultWidget(panel);
-    context_menu_->addAction(action);
 
     connect(lock_button_, &QToolButton::toggled, this,
             [this](bool locked) { set_locked(locked); });
@@ -311,7 +305,7 @@ void PinnedResultWindow::set_opacity_percent(int opacity_percent) {
     }
     preferences_.opacity_percent = clamped;
     setWindowOpacity(clamped / 100.0);
-    if (context_menu_) set_menu_opacity(context_menu_, clamped / 100.0);
+    if (context_menu_) set_popup_opacity(context_menu_, clamped / 100.0);
     if (opacity_slider_) {
         const QSignalBlocker blocker(opacity_slider_);
         opacity_slider_->setValue(clamped);
@@ -560,9 +554,11 @@ void PinnedResultWindow::contextMenuEvent(QContextMenuEvent* event) {
     if (!context_menu_) build_context_menu();
     update_lock_control();
     const qreal opacity = preferences_.opacity_percent / 100.0;
-    set_menu_opacity(context_menu_, opacity);
-    context_menu_->popup(context_menu_position());
-    set_menu_opacity(context_menu_, opacity);
+    set_popup_opacity(context_menu_, opacity);
+    context_menu_->move(context_menu_position());
+    context_menu_->show();
+    context_menu_->raise();
+    set_popup_opacity(context_menu_, opacity);
     event->accept();
 }
 

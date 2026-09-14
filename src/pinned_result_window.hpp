@@ -15,7 +15,6 @@
 class QFrame;
 class QContextMenuEvent;
 class QLabel;
-class QMenu;
 class QMouseEvent;
 class QResizeEvent;
 class QSlider;
@@ -74,7 +73,7 @@ private:
     std::function<void(Preferences)> preferences_changed_;
     Preferences preferences_;
     QFrame* frame_{};
-    QMenu* context_menu_{};
+    QWidget* context_menu_{};
     QToolButton* lock_button_{};
     QSlider* opacity_slider_{};
     QWidget *mortar_panel_{}, *vehicle_panel_{};
