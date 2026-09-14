@@ -6,6 +6,7 @@
 #include <dwmapi.h>
 
 #include <QComboBox>
+#include <QApplication>
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QGroupBox>
@@ -89,7 +90,14 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
     connect(buttons, &QDialogButtonBox::accepted, this,
             &SettingsDialog::accept_if_valid);
     connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
-    root->addWidget(buttons);
+    auto* footer = new QHBoxLayout;
+    auto* version = new QLabel(
+        QStringLiteral("当前版本  v%1").arg(QApplication::applicationVersion()));
+    version->setObjectName(QStringLiteral("muted"));
+    footer->addWidget(version);
+    footer->addStretch();
+    footer->addWidget(buttons);
+    root->addLayout(footer);
     enable_dark_title_bar(reinterpret_cast<HWND>(winId()));
 }
 
