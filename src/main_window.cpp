@@ -702,7 +702,15 @@ private:
     void enter_pinned_mode() {
         if (!pinned_window_) {
             pinned_window_ = std::make_unique<PinnedResultWindow>(
-                [this] { exit_pinned_mode(); });
+                [this] { exit_pinned_mode(); }, settings_.pinned_card,
+                [this](PinnedResultWindow::Preferences preferences) {
+                    settings_.pinned_card = preferences;
+                    try {
+                        wardogs::save_settings(settings_);
+                    } catch (...) {
+                        // Display preferences remain active for this session.
+                    }
+                });
         }
         sync_pinned_result();
         pinned_window_->set_error(failure_state_);
@@ -1096,6 +1104,21 @@ QFrame#appFrame[error="true"] { border-color:#ef4444; }
 QFrame#pinnedFrame { background:#0f172a; border:3px solid transparent;
                      border-radius:10px; }
 QFrame#pinnedFrame[error="true"] { border-color:#ef4444; }
+QMenu#pinnedContextMenu { background:#111827; border:1px solid #475569;
+                          border-radius:8px; padding:3px; }
+QWidget#pinnedControlPanel { background:#111827; }
+QToolButton#pinnedLockButton { background:#0f172a; border:1px solid #475569;
+    border-radius:6px; padding:4px; }
+QToolButton#pinnedLockButton:hover { background:#1e293b; border-color:#64748b; }
+QToolButton#pinnedLockButton:checked { background:#164e63; border-color:#22d3ee; }
+QSlider#pinnedOpacitySlider::groove:horizontal { height:5px; background:#334155;
+    border-radius:2px; }
+QSlider#pinnedOpacitySlider::sub-page:horizontal { background:#38bdf8;
+    border-radius:2px; }
+QSlider#pinnedOpacitySlider::handle:horizontal { background:#e2e8f0;
+    border:1px solid #64748b; width:15px; margin:-6px 0; border-radius:7px; }
+QSlider#pinnedOpacitySlider::handle:horizontal:hover { background:#f8fafc;
+    border-color:#38bdf8; }
 QLabel#title,QLabel#dialogTitle { color:#f8fafc; font-size:26px; font-weight:700; }
 QLabel#dialogTitle { font-size:23px; }
 QLabel#muted { color:#94a3b8; }

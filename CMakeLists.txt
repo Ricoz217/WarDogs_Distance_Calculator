@@ -150,6 +150,7 @@ add_custom_command(TARGET wardogs_terrain_tests POST_BUILD
 
 add_executable(wardogs_vehicle_ui_tests
     tests/vehicle_ui_tests.cpp
+    src/pinned_result_window.cpp
     src/vehicle_solution_widget.cpp
 )
 target_include_directories(wardogs_vehicle_ui_tests PRIVATE include src)

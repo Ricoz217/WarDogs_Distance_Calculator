@@ -29,12 +29,18 @@ int main() {
 
     AppSettings saved;
     saved.region_hotkey = L"Ctrl+F8";
+    saved.pinned_card.locked = true;
+    saved.pinned_card.opacity_percent = 63;
     saved.capture_region = CaptureRegion{L"\\\\.\\DISPLAY2", {13, 27, 413, 81}};
     wardogs::save_settings_to(path, saved);
 
     const AppSettings loaded = wardogs::load_settings_from(path);
     check(loaded.region_hotkey == saved.region_hotkey,
           "ordinary settings survive the explicit-path round trip");
+    check(loaded.pinned_card.locked,
+          "the pinned card lock state survives the explicit-path round trip");
+    check(loaded.pinned_card.opacity_percent == 63,
+          "the pinned card opacity survives the explicit-path round trip");
     check(loaded.capture_region.has_value(),
           "a configured OCR capture region is restored");
     if (loaded.capture_region) {
@@ -66,6 +72,14 @@ int main() {
     }
     check(!wardogs::load_settings_from(path).capture_region,
           "an empty or inverted persisted rectangle is ignored");
+
+    {
+        std::wofstream invalid_opacity(path, std::ios::trunc);
+        invalid_opacity << L"[settings]\n"
+                           L"pinned_card_opacity_percent=2\n";
+    }
+    check(wardogs::load_settings_from(path).pinned_card.opacity_percent == 35,
+          "persisted card opacity is clamped to the visible minimum");
 
     saved.capture_region.reset();
     wardogs::save_settings_to(path, saved);

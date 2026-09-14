@@ -1,7 +1,13 @@
+#include "pinned_result_window.hpp"
 #include "vehicle_solution_widget.hpp"
 
 #include <QApplication>
+#include <QContextMenuEvent>
 #include <QLabel>
+#include <QMenu>
+#include <QMouseEvent>
+#include <QSlider>
+#include <QToolButton>
 
 #include <cstdlib>
 #include <iostream>
@@ -51,6 +57,77 @@ int main(int argc, char* argv[]) {
                   label->text() != QStringLiteral("分划"),
               "pinned vehicle card contains values only");
     }
+
+    int exits = 0;
+    int saved_opacity = 0;
+    bool saved_lock = false;
+    PinnedResultWindow pinned(
+        [&exits] { ++exits; }, {true, 67},
+        [&saved_lock, &saved_opacity](PinnedResultWindow::Preferences preferences) {
+            saved_lock = preferences.locked;
+            saved_opacity = preferences.opacity_percent;
+        });
+    check(pinned.is_locked(), "pinned card restores its locked state");
+    check(pinned.opacity_percent() == 67,
+          "pinned card restores its opacity setting");
+    check(pinned.windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus),
+          "pinned card cannot steal focus from the game");
+
+    pinned.move(100, 100);
+    pinned.resize(430, 78);
+    const QRect locked_geometry = pinned.geometry();
+    QMouseEvent locked_press(
+        QEvent::MouseButtonPress, QPointF(20, 20), QPointF(120, 120),
+        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&pinned, &locked_press);
+    QMouseEvent locked_move(
+        QEvent::MouseMove, QPointF(100, 60), QPointF(200, 160),
+        Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&pinned, &locked_move);
+    QMouseEvent locked_release(
+        QEvent::MouseButtonRelease, QPointF(100, 60), QPointF(200, 160),
+        Qt::LeftButton, Qt::NoButton, Qt::NoModifier);
+    QApplication::sendEvent(&pinned, &locked_release);
+    check(pinned.geometry() == locked_geometry,
+          "left-button drag and resize do nothing while the card is locked");
+
+    QMouseEvent locked_double_click(
+        QEvent::MouseButtonDblClick, QPointF(20, 20), QPointF(20, 20),
+        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&pinned, &locked_double_click);
+    check(exits == 0, "double click cannot exit while the pinned card is locked");
+
+    pinned.set_locked(false);
+    QMouseEvent unlocked_double_click(
+        QEvent::MouseButtonDblClick, QPointF(20, 20), QPointF(20, 20),
+        Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(&pinned, &unlocked_double_click);
+    check(exits == 1, "double click exits after the pinned card is unlocked");
+    check(!saved_lock && saved_opacity == 67,
+          "changing the lock persists both pinned-card preferences");
+
+    pinned.set_opacity_percent(1);
+    check(pinned.opacity_percent() == 35,
+          "pinned card remains visible at the minimum opacity");
+    check(saved_opacity == 35,
+          "changing opacity immediately persists the clamped value");
+
+    QContextMenuEvent menu_event(QContextMenuEvent::Mouse, QPoint(10, 10),
+                                 QPoint(10, 10));
+    QApplication::sendEvent(&pinned, &menu_event);
+    auto* menu = pinned.findChild<QMenu*>(QStringLiteral("pinnedContextMenu"));
+    const auto* lock_button =
+        pinned.findChild<QToolButton*>(QStringLiteral("pinnedLockButton"));
+    const auto* opacity_slider =
+        pinned.findChild<QSlider*>(QStringLiteral("pinnedOpacitySlider"));
+    check(menu && lock_button && opacity_slider,
+          "right click exposes the lock button and opacity slider");
+    check(lock_button && lock_button->text().isEmpty(),
+          "lock control is icon-only");
+    check(opacity_slider && opacity_slider->minimum() == 35 &&
+              opacity_slider->maximum() == 100,
+          "opacity slider keeps the card between 35 and 100 percent visible");
+    if (menu) menu->hide();
 
     std::cout << "All vehicle UI tests passed\n" << std::flush;
     // Qt's Windows offscreen plugin can wait indefinitely during process teardown.

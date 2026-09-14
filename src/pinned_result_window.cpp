@@ -3,13 +3,24 @@
 #include "vehicle_solution_widget.hpp"
 
 #include <QEvent>
+#include <QContextMenuEvent>
 #include <QFrame>
 #include <QHBoxLayout>
+#include <QIcon>
+#include <QImage>
 #include <QLabel>
+#include <QMenu>
 #include <QMouseEvent>
+#include <QPainter>
+#include <QPainterPath>
+#include <QPixmap>
 #include <QResizeEvent>
+#include <QSignalBlocker>
+#include <QSlider>
 #include <QStyle>
+#include <QToolButton>
 #include <QVBoxLayout>
+#include <QWidgetAction>
 
 #include <algorithm>
 
@@ -20,17 +31,59 @@ constexpr int resize_margin = 8;
 QSize minimum_size(bool vehicle) { return vehicle ? QSize{350, 96} : QSize{320, 62}; }
 QSize default_size(bool vehicle) { return vehicle ? QSize{420, 116} : QSize{430, 78}; }
 
+QIcon lock_icon(bool locked) {
+    QImage image(24, 24, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QColor color(locked ? QStringLiteral("#67e8f9")
+                              : QStringLiteral("#94a3b8"));
+    painter.setPen(QPen(color, 1.8, Qt::SolidLine, Qt::RoundCap,
+                        Qt::RoundJoin));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawRoundedRect(QRectF(5.5, 10.0, 13.0, 10.0), 2.0, 2.0);
+    QPainterPath shackle;
+    if (locked) {
+        shackle.moveTo(8.0, 10.0);
+        shackle.lineTo(8.0, 7.5);
+        shackle.cubicTo(8.0, 2.8, 16.0, 2.8, 16.0, 7.5);
+        shackle.lineTo(16.0, 10.0);
+    } else {
+        shackle.moveTo(10.0, 10.0);
+        shackle.lineTo(10.0, 7.5);
+        shackle.cubicTo(10.0, 3.0, 17.0, 3.0, 17.0, 7.5);
+    }
+    painter.drawPath(shackle);
+    painter.setBrush(color);
+    painter.drawEllipse(QPointF(12.0, 14.4), 1.2, 1.2);
+    painter.drawLine(QPointF(12.0, 15.4), QPointF(12.0, 17.3));
+    return QIcon(QPixmap::fromImage(image));
+}
+
 }  // namespace
 
 PinnedResultWindow::PinnedResultWindow(std::function<void()> exit_callback,
                                        QWidget* parent)
+    : PinnedResultWindow(std::move(exit_callback), Preferences{}, {}, parent) {}
+
+PinnedResultWindow::PinnedResultWindow(
+    std::function<void()> exit_callback, Preferences preferences,
+    std::function<void(Preferences)> preferences_changed, QWidget* parent)
     : QWidget(parent, Qt::Tool | Qt::FramelessWindowHint |
-                          Qt::WindowStaysOnTopHint),
-      exit_callback_(std::move(exit_callback)) {
+                          Qt::WindowStaysOnTopHint |
+                          Qt::WindowDoesNotAcceptFocus),
+      exit_callback_(std::move(exit_callback)),
+      preferences_changed_(std::move(preferences_changed)),
+      preferences_(preferences) {
+    preferences_.opacity_percent = std::clamp(
+        preferences_.opacity_percent, Preferences::minimum_opacity_percent,
+        Preferences::maximum_opacity_percent);
     setObjectName(QStringLiteral("pinnedWindow"));
     setAttribute(Qt::WA_TranslucentBackground);
+    setAttribute(Qt::WA_ShowWithoutActivating);
     setMouseTracking(true);
-    setCursor(Qt::OpenHandCursor);
+    setCursor(preferences_.locked ? Qt::ArrowCursor : Qt::OpenHandCursor);
+    setWindowOpacity(preferences_.opacity_percent / 100.0);
     setWindowTitle(QStringLiteral("War Dogs 射表结果"));
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
@@ -63,7 +116,94 @@ PinnedResultWindow::PinnedResultWindow(std::function<void()> exit_callback,
     outer->addWidget(frame_);
     setMinimumSize(minimum_size(false));
     resize(default_size(false));
+    build_context_menu();
     apply_font_scale();
+}
+
+void PinnedResultWindow::build_context_menu() {
+    context_menu_ = new QMenu(this);
+    context_menu_->setObjectName(QStringLiteral("pinnedContextMenu"));
+
+    auto* panel = new QWidget(context_menu_);
+    panel->setObjectName(QStringLiteral("pinnedControlPanel"));
+    auto* layout = new QHBoxLayout(panel);
+    layout->setContentsMargins(6, 5, 8, 5);
+    layout->setSpacing(10);
+
+    lock_button_ = new QToolButton(panel);
+    lock_button_->setObjectName(QStringLiteral("pinnedLockButton"));
+    lock_button_->setCheckable(true);
+    lock_button_->setAutoRaise(false);
+    lock_button_->setFixedSize(36, 34);
+    lock_button_->setIconSize(QSize(22, 22));
+    layout->addWidget(lock_button_);
+
+    opacity_slider_ = new QSlider(Qt::Horizontal, panel);
+    opacity_slider_->setObjectName(QStringLiteral("pinnedOpacitySlider"));
+    opacity_slider_->setRange(Preferences::minimum_opacity_percent,
+                              Preferences::maximum_opacity_percent);
+    opacity_slider_->setValue(preferences_.opacity_percent);
+    opacity_slider_->setMinimumWidth(150);
+    opacity_slider_->setToolTip(
+        QStringLiteral("卡片透明度：%1%").arg(preferences_.opacity_percent));
+    opacity_slider_->setAccessibleName(QStringLiteral("结果卡片透明度"));
+    layout->addWidget(opacity_slider_);
+
+    auto* action = new QWidgetAction(context_menu_);
+    action->setDefaultWidget(panel);
+    context_menu_->addAction(action);
+
+    connect(lock_button_, &QToolButton::toggled, this,
+            [this](bool locked) { set_locked(locked); });
+    connect(opacity_slider_, &QSlider::valueChanged, this,
+            [this](int value) { set_opacity_percent(value); });
+    update_lock_control();
+}
+
+void PinnedResultWindow::update_lock_control() {
+    if (!lock_button_) return;
+    const QSignalBlocker blocker(lock_button_);
+    lock_button_->setChecked(preferences_.locked);
+    lock_button_->setIcon(lock_icon(preferences_.locked));
+    lock_button_->setToolTip(preferences_.locked
+                                 ? QStringLiteral("解除固定")
+                                 : QStringLiteral("固定结果卡片"));
+    lock_button_->setAccessibleName(lock_button_->toolTip());
+}
+
+void PinnedResultWindow::notify_preferences_changed() {
+    if (preferences_changed_) preferences_changed_(preferences_);
+}
+
+void PinnedResultWindow::set_locked(bool locked) {
+    if (preferences_.locked == locked) return;
+    preferences_.locked = locked;
+    dragging_ = false;
+    resize_edges_.clear();
+    setCursor(locked ? Qt::ArrowCursor : Qt::OpenHandCursor);
+    update_lock_control();
+    notify_preferences_changed();
+}
+
+void PinnedResultWindow::set_opacity_percent(int opacity_percent) {
+    const int clamped = std::clamp(
+        opacity_percent, Preferences::minimum_opacity_percent,
+        Preferences::maximum_opacity_percent);
+    if (preferences_.opacity_percent == clamped) {
+        if (opacity_slider_)
+            opacity_slider_->setToolTip(
+                QStringLiteral("卡片透明度：%1%").arg(clamped));
+        return;
+    }
+    preferences_.opacity_percent = clamped;
+    setWindowOpacity(clamped / 100.0);
+    if (opacity_slider_) {
+        const QSignalBlocker blocker(opacity_slider_);
+        opacity_slider_->setValue(clamped);
+        opacity_slider_->setToolTip(
+            QStringLiteral("卡片透明度：%1%").arg(clamped));
+    }
+    notify_preferences_changed();
 }
 
 QWidget* PinnedResultWindow::result_card(const QString& color, QLabel*& value) {
@@ -187,6 +327,10 @@ void PinnedResultWindow::resizeEvent(QResizeEvent* event) {
 
 void PinnedResultWindow::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
+        if (preferences_.locked) {
+            event->accept();
+            return;
+        }
         const auto edges = resize_edges_at(event->position().toPoint());
         if (!edges.empty()) {
             resize_edges_ = edges;
@@ -206,6 +350,11 @@ void PinnedResultWindow::mousePressEvent(QMouseEvent* event) {
 }
 
 void PinnedResultWindow::mouseMoveEvent(QMouseEvent* event) {
+    if (preferences_.locked) {
+        setCursor(Qt::ArrowCursor);
+        event->accept();
+        return;
+    }
     if (!resize_edges_.empty() && (event->buttons() & Qt::LeftButton)) {
         resize_from_pointer(event->globalPosition().toPoint());
         event->accept();
@@ -222,6 +371,10 @@ void PinnedResultWindow::mouseMoveEvent(QMouseEvent* event) {
 
 void PinnedResultWindow::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
+        if (preferences_.locked) {
+            event->accept();
+            return;
+        }
         resize_edges_.clear();
         dragging_ = false;
         setCursor(cursor_for_edges(resize_edges_at(event->position().toPoint())));
@@ -233,6 +386,10 @@ void PinnedResultWindow::mouseReleaseEvent(QMouseEvent* event) {
 
 void PinnedResultWindow::mouseDoubleClickEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
+        if (preferences_.locked) {
+            event->accept();
+            return;
+        }
         dragging_ = false;
         resize_edges_.clear();
         if (exit_callback_) exit_callback_();
@@ -243,6 +400,14 @@ void PinnedResultWindow::mouseDoubleClickEvent(QMouseEvent* event) {
 }
 
 void PinnedResultWindow::leaveEvent(QEvent* event) {
-    if (!dragging_ && resize_edges_.empty()) setCursor(Qt::OpenHandCursor);
+    if (!dragging_ && resize_edges_.empty())
+        setCursor(preferences_.locked ? Qt::ArrowCursor : Qt::OpenHandCursor);
     QWidget::leaveEvent(event);
+}
+
+void PinnedResultWindow::contextMenuEvent(QContextMenuEvent* event) {
+    if (!context_menu_) build_context_menu();
+    update_lock_control();
+    context_menu_->popup(event->globalPos());
+    event->accept();
 }

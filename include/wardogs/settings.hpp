@@ -2,6 +2,7 @@
 
 #include "wardogs/capture.hpp"
 #include "wardogs/core.hpp"
+#include "wardogs/pinned_preferences.hpp"
 
 #include <filesystem>
 #include <optional>
@@ -19,6 +20,7 @@ struct AppSettings {
     OcrBackend backend{OcrBackend::rapid};
     std::wstring coordinate_pattern{default_ocr_coordinate_pattern};
     std::optional<CaptureRegion> capture_region;
+    PinnedCardPreferences pinned_card;
 };
 
 std::filesystem::path settings_path();
