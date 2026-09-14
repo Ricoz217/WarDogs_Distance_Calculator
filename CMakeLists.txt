@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(WarDogsDistanceCalculator VERSION 1.1.0 LANGUAGES CXX)
+project(WarDogsDistanceCalculator VERSION 1.2.0 LANGUAGES C CXX)
 set(CMAKE_CL_SHOWINCLUDES_PREFIX "注意: 包含文件:")
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets)
@@ -10,6 +10,30 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
+add_library(wardogs_zstd STATIC
+    third_party/zstd/common/debug.c
+    third_party/zstd/common/entropy_common.c
+    third_party/zstd/common/error_private.c
+    third_party/zstd/common/fse_decompress.c
+    third_party/zstd/common/xxhash.c
+    third_party/zstd/common/zstd_common.c
+    third_party/zstd/decompress/huf_decompress.c
+    third_party/zstd/decompress/zstd_ddict.c
+    third_party/zstd/decompress/zstd_decompress_block.c
+    third_party/zstd/decompress/zstd_decompress.c
+)
+target_include_directories(wardogs_zstd PUBLIC third_party/zstd)
+target_include_directories(wardogs_zstd PRIVATE third_party/zstd/common)
+target_compile_definitions(wardogs_zstd PRIVATE ZSTD_DISABLE_ASM)
+
+add_library(wardogs_terrain src/terrain_package.cpp)
+target_include_directories(wardogs_terrain PUBLIC include)
+target_compile_definitions(wardogs_terrain PUBLIC UNICODE _UNICODE NOMINMAX)
+target_link_libraries(wardogs_terrain PRIVATE Qt6::Core wardogs_zstd bcrypt)
+if(MSVC)
+    target_compile_options(wardogs_terrain PRIVATE /W4 /permissive- /utf-8)
+endif()
+
 add_library(wardogs_core
     src/calculator.cpp
     src/coordinates.cpp
@@ -17,6 +41,7 @@ add_library(wardogs_core
     src/image.cpp
     src/ocr.cpp
     src/presentation.cpp
+    src/vehicle_ballistics.cpp
 )
 target_include_directories(wardogs_core PUBLIC include)
 target_compile_definitions(wardogs_core PUBLIC UNICODE _UNICODE NOMINMAX)
@@ -38,7 +63,12 @@ if(WIN32)
     qt_add_executable(WarDogsDistanceCalculator WIN32
         src/app.cpp
         src/capture.cpp
+        src/main_window.cpp
+        src/pinned_result_window.cpp
+        src/selection_overlay.cpp
         src/settings.cpp
+        src/settings_dialog.cpp
+        src/vehicle_solution_widget.cpp
         src/windows_ocr.cpp
         "${CMAKE_CURRENT_BINARY_DIR}/version.rc"
     )
@@ -48,7 +78,7 @@ if(WIN32)
     )
     target_compile_options(WarDogsDistanceCalculator PRIVATE /W4 /permissive- /utf-8)
     target_link_libraries(WarDogsDistanceCalculator PRIVATE
-        wardogs_core Qt6::Widgets dwmapi gdi32 user32 windowsapp
+        wardogs_core wardogs_terrain Qt6::Widgets dwmapi gdi32 user32 windowsapp
     )
     add_custom_command(TARGET WarDogsDistanceCalculator POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -70,6 +100,9 @@ install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/THIRD_PARTY_NOTICES.md"
     DESTINATION .
 )
+install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zstd/LICENSE.txt"
+    DESTINATION licenses/zstd
+)
 install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/models/PP-OCRv6_rec_small.onnx"
     "${CMAKE_CURRENT_SOURCE_DIR}/assets/models/LICENSE.PaddleOCR.txt"
@@ -88,6 +121,51 @@ if(MSVC)
     target_compile_options(wardogs_tests PRIVATE /W4 /permissive- /utf-8)
 endif()
 add_test(NAME wardogs_core_tests COMMAND wardogs_tests)
+
+add_executable(wardogs_vehicle_ballistics_tests tests/vehicle_ballistics_tests.cpp)
+target_link_libraries(wardogs_vehicle_ballistics_tests PRIVATE wardogs_core)
+if(MSVC)
+    target_compile_options(wardogs_vehicle_ballistics_tests PRIVATE /W4 /permissive- /utf-8)
+endif()
+add_test(NAME wardogs_vehicle_ballistics_tests COMMAND wardogs_vehicle_ballistics_tests)
+
+add_executable(wardogs_terrain_tests tests/terrain_package_tests.cpp)
+target_link_libraries(wardogs_terrain_tests PRIVATE wardogs_terrain Qt6::Core)
+target_compile_definitions(wardogs_terrain_tests PRIVATE
+    WARDOGS_TERRAIN_TEST_PACKAGE=L"${CMAKE_CURRENT_SOURCE_DIR}/tests/data/terrain_test.wdt"
+)
+if(MSVC)
+    target_compile_options(wardogs_terrain_tests PRIVATE /W4 /permissive- /utf-8)
+endif()
+add_test(NAME wardogs_terrain_tests COMMAND wardogs_terrain_tests)
+add_custom_command(TARGET wardogs_terrain_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:Qt6::Core>"
+        "$<TARGET_FILE_DIR:wardogs_terrain_tests>"
+)
+
+add_executable(wardogs_vehicle_ui_tests
+    tests/vehicle_ui_tests.cpp
+    src/vehicle_solution_widget.cpp
+)
+target_include_directories(wardogs_vehicle_ui_tests PRIVATE include src)
+target_link_libraries(wardogs_vehicle_ui_tests PRIVATE wardogs_core Qt6::Widgets)
+if(MSVC)
+    target_compile_options(wardogs_vehicle_ui_tests PRIVATE /W4 /permissive- /utf-8)
+endif()
+add_test(NAME wardogs_vehicle_ui_tests COMMAND wardogs_vehicle_ui_tests)
+add_custom_command(TARGET wardogs_vehicle_ui_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:Qt6::Core>"
+        "$<TARGET_FILE:Qt6::Gui>"
+        "$<TARGET_FILE:Qt6::Widgets>"
+        "$<TARGET_FILE_DIR:wardogs_vehicle_ui_tests>"
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:wardogs_vehicle_ui_tests>/platforms"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "$<TARGET_FILE:Qt6::QOffscreenIntegrationPlugin>"
+        "$<TARGET_FILE_DIR:wardogs_vehicle_ui_tests>/platforms"
+)
 
 add_executable(wardogs_settings_tests
     tests/settings_tests.cpp
