@@ -112,8 +112,8 @@ int main(int argc, char* argv[]) {
                              center_position + QPointF(100, 100), edge_position,
                              Qt::NoModifier);
     QApplication::sendEvent(&pinned, &center_hover);
-    check(pinned.cursor().shape() == Qt::OpenHandCursor,
-          "an unlocked card shows the drag cursor in its interior");
+    check(pinned.cursor().shape() == Qt::ArrowCursor,
+          "an unlocked card keeps the ordinary cursor in its interior");
     QMouseEvent unlocked_double_click(
         QEvent::MouseButtonDblClick, QPointF(20, 20), QPointF(20, 20),
         Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
@@ -145,6 +145,12 @@ int main(int argc, char* argv[]) {
           "opacity slider keeps the card between 35 and 100 percent visible");
     check(menu && menu->frameGeometry().left() > pinned.frameGeometry().right(),
           "the context menu is anchored beside the card instead of at the pointer");
+    check(menu && menu->frameGeometry().left() - pinned.frameGeometry().right() <= 3,
+          "the side menu visually joins the card without a wide gap");
+    check(menu && menu->testAttribute(Qt::WA_TranslucentBackground) &&
+              !menu->mask().isEmpty() &&
+              !menu->mask().contains(QPoint(menu->width() - 1, 0)),
+          "the menu window clips both outer corners instead of exposing a square edge");
     check(menu && qAbs(menu->windowOpacity() - pinned.windowOpacity()) < 0.001,
           "the context menu follows the card opacity");
     if (opacity_slider) {

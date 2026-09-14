@@ -47,6 +47,8 @@ public:
 
 protected:
     bool event(QEvent* event) override;
+    bool nativeEvent(const QByteArray& event_type, void* message,
+                     qintptr* result) override;
     void resizeEvent(QResizeEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;

@@ -2,8 +2,11 @@
 
 #include "vehicle_solution_widget.hpp"
 
+#include <Windows.h>
+
 #include <QEvent>
 #include <QContextMenuEvent>
+#include <QCursor>
 #include <QFrame>
 #include <QGuiApplication>
 #include <QHBoxLayout>
@@ -17,6 +20,7 @@
 #include <QPainterPath>
 #include <QPixmap>
 #include <QResizeEvent>
+#include <QRegion>
 #include <QScreen>
 #include <QSignalBlocker>
 #include <QSlider>
@@ -96,6 +100,19 @@ private:
     bool jump_dragging_{};
 };
 
+class RoundedMenu final : public QMenu {
+public:
+    using QMenu::QMenu;
+
+protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QMenu::resizeEvent(event);
+        QPainterPath shape;
+        shape.addRoundedRect(QRectF(rect()), 10.0, 10.0);
+        setMask(QRegion(shape.toFillPolygon().toPolygon()));
+    }
+};
+
 QIcon lock_icon(bool locked) {
     QImage image(24, 24, QImage::Format_ARGB32_Premultiplied);
     image.fill(Qt::transparent);
@@ -148,7 +165,7 @@ PinnedResultWindow::PinnedResultWindow(
     setAttribute(Qt::WA_ShowWithoutActivating);
     setAttribute(Qt::WA_Hover);
     setMouseTracking(true);
-    setCursor(preferences_.locked ? Qt::ArrowCursor : Qt::OpenHandCursor);
+    setCursor(Qt::ArrowCursor);
     setWindowOpacity(preferences_.opacity_percent / 100.0);
     setWindowTitle(QStringLiteral("War Dogs 射表结果"));
     auto* outer = new QVBoxLayout(this);
@@ -187,8 +204,10 @@ PinnedResultWindow::PinnedResultWindow(
 }
 
 void PinnedResultWindow::build_context_menu() {
-    context_menu_ = new QMenu(this);
+    context_menu_ = new RoundedMenu(this);
     context_menu_->setObjectName(QStringLiteral("pinnedContextMenu"));
+    context_menu_->setAttribute(Qt::WA_TranslucentBackground);
+    context_menu_->setWindowFlag(Qt::NoDropShadowWindowHint);
     context_menu_->setWindowOpacity(preferences_.opacity_percent / 100.0);
 
     auto* panel = new QWidget(context_menu_);
@@ -247,7 +266,7 @@ void PinnedResultWindow::set_locked(bool locked) {
     preferences_.locked = locked;
     dragging_ = false;
     resize_edges_.clear();
-    setCursor(locked ? Qt::ArrowCursor : Qt::OpenHandCursor);
+    setCursor(Qt::ArrowCursor);
     update_lock_control();
     notify_preferences_changed();
 }
@@ -297,6 +316,31 @@ bool PinnedResultWindow::event(QEvent* event) {
                             resize_edges_at(hover->position().toPoint())));
     }
     return QWidget::event(event);
+}
+
+bool PinnedResultWindow::nativeEvent(const QByteArray& event_type, void* message,
+                                     qintptr* result) {
+    auto* native_message = static_cast<MSG*>(message);
+    if (native_message && native_message->message == WM_SETCURSOR) {
+        LPCWSTR cursor_id = IDC_ARROW;
+        if (!preferences_.locked) {
+            const auto edges = resize_edges_at(mapFromGlobal(QCursor::pos()));
+            if (edges == Edges{"left", "top"} ||
+                edges == Edges{"bottom", "right"})
+                cursor_id = IDC_SIZENWSE;
+            else if (edges == Edges{"right", "top"} ||
+                     edges == Edges{"bottom", "left"})
+                cursor_id = IDC_SIZENESW;
+            else if (edges.contains("left") || edges.contains("right"))
+                cursor_id = IDC_SIZEWE;
+            else if (edges.contains("top") || edges.contains("bottom"))
+                cursor_id = IDC_SIZENS;
+        }
+        ::SetCursor(::LoadCursorW(nullptr, cursor_id));
+        *result = TRUE;
+        return true;
+    }
+    return QWidget::nativeEvent(event_type, message, result);
 }
 
 void PinnedResultWindow::set_mode(bool vehicle_mode) {
@@ -352,7 +396,7 @@ Qt::CursorShape PinnedResultWindow::cursor_for_edges(const Edges& edges) {
         return Qt::SizeHorCursor;
     if (edges.contains("top") || edges.contains("bottom"))
         return Qt::SizeVerCursor;
-    return Qt::OpenHandCursor;
+    return Qt::ArrowCursor;
 }
 
 void PinnedResultWindow::resize_from_pointer(QPoint pointer) {
@@ -480,7 +524,7 @@ void PinnedResultWindow::mouseDoubleClickEvent(QMouseEvent* event) {
 
 void PinnedResultWindow::leaveEvent(QEvent* event) {
     if (!dragging_ && resize_edges_.empty())
-        setCursor(preferences_.locked ? Qt::ArrowCursor : Qt::OpenHandCursor);
+        setCursor(Qt::ArrowCursor);
     QWidget::leaveEvent(event);
 }
 
@@ -495,7 +539,7 @@ void PinnedResultWindow::contextMenuEvent(QContextMenuEvent* event) {
 QPoint PinnedResultWindow::context_menu_position() const {
     context_menu_->ensurePolished();
     context_menu_->adjustSize();
-    constexpr int gap = 8;
+    constexpr int gap = 2;
     const QSize menu_size = context_menu_->sizeHint().expandedTo(context_menu_->size());
     QPoint position = mapToGlobal(
         QPoint(width() + gap, (height() - menu_size.height()) / 2));
