@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(WarDogsDistanceCalculator VERSION 1.3.0 LANGUAGES C CXX)
+project(WarDogsDistanceCalculator VERSION 1.3.1 LANGUAGES C CXX)
 set(CMAKE_CL_SHOWINCLUDES_PREFIX "注意: 包含文件:")
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets)
@@ -62,6 +62,7 @@ if(WIN32)
         @ONLY
     )
     qt_add_executable(WarDogsDistanceCalculator WIN32
+        src/app_icon.cpp
         src/app.cpp
         src/capture.cpp
         src/main_window.cpp
@@ -71,6 +72,7 @@ if(WIN32)
         src/settings_dialog.cpp
         src/vehicle_solution_widget.cpp
         src/window_title_bar.cpp
+        src/windows_taskbar.cpp
         src/windows_ocr.cpp
         "${CMAKE_CURRENT_BINARY_DIR}/version.rc"
     )
@@ -81,6 +83,7 @@ if(WIN32)
     target_compile_options(WarDogsDistanceCalculator PRIVATE /W4 /permissive- /utf-8)
     target_link_libraries(WarDogsDistanceCalculator PRIVATE
         wardogs_core wardogs_terrain Qt6::Widgets dwmapi gdi32 user32 windowsapp
+        shell32 ole32 propsys
     )
     add_custom_command(TARGET WarDogsDistanceCalculator POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -152,6 +155,7 @@ add_custom_command(TARGET wardogs_terrain_tests POST_BUILD
 
 add_executable(wardogs_vehicle_ui_tests
     tests/vehicle_ui_tests.cpp
+    src/app_icon.cpp
     src/pinned_result_window.cpp
     src/vehicle_solution_widget.cpp
     src/window_title_bar.cpp

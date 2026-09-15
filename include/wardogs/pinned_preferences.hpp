@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 namespace wardogs {
 
 struct PinnedCardPreferences {
@@ -8,6 +10,7 @@ struct PinnedCardPreferences {
 
     bool locked{};
     int opacity_percent{maximum_opacity_percent};
+    std::wstring unlock_hotkey{L"Ctrl+Alt+Q"};
 };
 
 }  // namespace wardogs

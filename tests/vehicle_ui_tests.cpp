@@ -1,4 +1,5 @@
 #include "pinned_result_window.hpp"
+#include "app_icon.hpp"
 #include "vehicle_solution_widget.hpp"
 #include "window_title_bar.hpp"
 
@@ -8,8 +9,10 @@
 #include <QContextMenuEvent>
 #include <QHoverEvent>
 #include <QImage>
+#include <QKeySequenceEdit>
 #include <QLabel>
 #include <QMenu>
+#include <QMetaObject>
 #include <QMouseEvent>
 #include <QSlider>
 #include <QToolButton>
@@ -32,6 +35,8 @@ void check(bool condition, const char* message) {
 int main(int argc, char* argv[]) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
+    check(!wardogs_application_icon().isNull(),
+          "the application icon is available to windows and title bars");
 
     QWidget host;
     host.setWindowTitle(QStringLiteral("测试窗口"));
@@ -94,17 +99,27 @@ int main(int argc, char* argv[]) {
     int exits = 0;
     int saved_opacity = 0;
     bool saved_lock = false;
+    std::wstring saved_unlock_hotkey;
     PinnedResultWindow pinned(
         [&exits] { ++exits; }, {true, 67},
-        [&saved_lock, &saved_opacity](PinnedResultWindow::Preferences preferences) {
+        [&saved_lock, &saved_opacity, &saved_unlock_hotkey](
+            const PinnedResultWindow::Preferences& preferences) {
             saved_lock = preferences.locked;
             saved_opacity = preferences.opacity_percent;
+            saved_unlock_hotkey = preferences.unlock_hotkey;
+            return true;
         });
     check(pinned.is_locked(), "pinned card restores its locked state");
     check(pinned.opacity_percent() == 67,
           "pinned card restores its opacity setting");
     check(pinned.windowFlags().testFlag(Qt::WindowDoesNotAcceptFocus),
           "pinned card cannot steal focus from the game");
+    check(pinned.windowType() == Qt::Window,
+          "pinned mode keeps a normal taskbar window instead of a tool window");
+    check(pinned.testAttribute(Qt::WA_TransparentForMouseEvents),
+          "a locked card is completely transparent to mouse input");
+    check(pinned.windowFlags().testFlag(Qt::WindowTransparentForInput),
+          "the native window system passes locked-card input through");
 
     pinned.move(100, 100);
     pinned.resize(430, 78);
@@ -131,6 +146,10 @@ int main(int argc, char* argv[]) {
     check(exits == 0, "double click cannot exit while the pinned card is locked");
 
     pinned.set_locked(false);
+    check(!pinned.testAttribute(Qt::WA_TransparentForMouseEvents),
+          "the global unlock action restores mouse interaction");
+    check(!pinned.windowFlags().testFlag(Qt::WindowTransparentForInput),
+          "unlocking removes native input transparency");
     const QPointF edge_position(1, pinned.height() / 2.0);
     QHoverEvent edge_hover(QEvent::HoverMove, edge_position,
                            edge_position + QPointF(100, 100), QPointF(20, 20),
@@ -168,8 +187,10 @@ int main(int argc, char* argv[]) {
         pinned.findChild<QToolButton*>(QStringLiteral("pinnedLockButton"));
     auto* opacity_slider =
         pinned.findChild<QSlider*>(QStringLiteral("pinnedOpacitySlider"));
-    check(menu && lock_button && opacity_slider,
-          "right click exposes the lock button and opacity slider");
+    auto* unlock_hotkey = pinned.findChild<QKeySequenceEdit*>(
+        QStringLiteral("pinnedUnlockHotkey"));
+    check(menu && lock_button && opacity_slider && unlock_hotkey,
+          "right click exposes lock, opacity, and unlock-hotkey controls");
     check(menu && qobject_cast<QMenu*>(menu) == nullptr &&
               menu->windowType() == Qt::Popup,
           "side controls use the same translucent QWidget approach as the card");
@@ -178,6 +199,17 @@ int main(int argc, char* argv[]) {
     check(opacity_slider && opacity_slider->minimum() == 35 &&
               opacity_slider->maximum() == 100,
           "opacity slider keeps the card between 35 and 100 percent visible");
+    check(unlock_hotkey &&
+              unlock_hotkey->keySequence().toString(QKeySequence::PortableText) ==
+                  QStringLiteral("Ctrl+Alt+Q"),
+          "the side controls show the default unlock hotkey");
+    if (unlock_hotkey) {
+        unlock_hotkey->setKeySequence(QKeySequence(QStringLiteral("Ctrl+Shift+U")));
+        QMetaObject::invokeMethod(unlock_hotkey, "editingFinished",
+                                  Qt::DirectConnection);
+        check(saved_unlock_hotkey == L"Ctrl+Shift+U",
+              "editing the side control immediately persists the unlock hotkey");
+    }
     check(menu && menu->frameGeometry().left() > pinned.frameGeometry().right(),
           "the context menu is anchored beside the card instead of at the pointer");
     check(menu && menu->frameGeometry().left() - pinned.frameGeometry().right() <= 3,

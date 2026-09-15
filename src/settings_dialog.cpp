@@ -31,7 +31,8 @@ QString error_text(const std::exception& error) {
 
 SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
                                QWidget* parent)
-    : QDialog(parent), capture_region_(settings.capture_region) {
+    : QDialog(parent), capture_region_(settings.capture_region),
+      pinned_card_(settings.pinned_card) {
     configure_frameless_window(this);
     setWindowTitle(QStringLiteral("设置 · War Dogs 射表计算"));
     setModal(true);
@@ -118,6 +119,7 @@ wardogs::AppSettings SettingsDialog::settings() const {
     value.quick_target_hotkey = hotkey_text(quick_target_key_);
     value.coordinate_pattern = pattern_->toPlainText().trimmed().toStdWString();
     value.capture_region = capture_region_;
+    value.pinned_card = pinned_card_;
     return value;
 }
 
@@ -150,6 +152,7 @@ void SettingsDialog::accept_if_valid() {
             wardogs::parse_hotkey(value.base_hotkey),
             wardogs::parse_hotkey(value.target_hotkey),
             wardogs::parse_hotkey(value.quick_target_hotkey),
+            wardogs::parse_hotkey(value.pinned_card.unlock_hotkey),
         };
         wardogs::validate_unique_hotkeys(hotkeys);
         const std::wregex pattern(value.coordinate_pattern,

@@ -76,6 +76,9 @@ AppSettings load_settings_from(const std::filesystem::path& path) {
                            : OcrBackend::rapid;
     settings.pinned_card.locked =
         read_value(path, L"pinned_card_locked", L"0") == L"1";
+    settings.pinned_card.unlock_hotkey = read_value(
+        path, L"pinned_card_unlock_hotkey",
+        settings.pinned_card.unlock_hotkey);
     if (const auto opacity = read_integer(path, L"pinned_card_opacity_percent")) {
         settings.pinned_card.opacity_percent = static_cast<int>(std::clamp(
             *opacity,
@@ -108,6 +111,8 @@ void save_settings_to(const std::filesystem::path& path,
                 settings.backend == OcrBackend::rapid ? L"rapid" : L"windows");
     write_value(path, L"pinned_card_locked",
                 settings.pinned_card.locked ? L"1" : L"0");
+    write_value(path, L"pinned_card_unlock_hotkey",
+                settings.pinned_card.unlock_hotkey);
     write_value(path, L"pinned_card_opacity_percent",
                 std::to_wstring(std::clamp(
                     settings.pinned_card.opacity_percent,

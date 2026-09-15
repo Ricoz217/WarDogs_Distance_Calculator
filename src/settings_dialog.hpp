@@ -36,4 +36,5 @@ private:
     QKeySequenceEdit* quick_target_key_{};
     QPlainTextEdit* pattern_{};
     std::optional<wardogs::CaptureRegion> capture_region_;
+    wardogs::PinnedCardPreferences pinned_card_;
 };

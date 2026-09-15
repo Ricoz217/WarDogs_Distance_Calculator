@@ -123,20 +123,24 @@ int main() {
     const wardogs::AppSettings default_settings;
     check(default_settings.quick_target_hotkey == L"F11",
           "quick target capture has an independent default hotkey");
+    check(default_settings.pinned_card.unlock_hotkey == L"Ctrl+Alt+Q",
+          "the pinned card has a default global unlock hotkey");
     const std::array unique_hotkeys{
         wardogs::parse_hotkey(L"F8"), wardogs::parse_hotkey(L"F9"),
-        wardogs::parse_hotkey(L"F10"), wardogs::parse_hotkey(L"F11")};
+        wardogs::parse_hotkey(L"F10"), wardogs::parse_hotkey(L"F11"),
+        wardogs::parse_hotkey(L"Ctrl+Alt+Q")};
     try {
         wardogs::validate_unique_hotkeys(unique_hotkeys);
     } catch (const std::invalid_argument&) {
-        check(false, "four distinct hotkeys are accepted");
+        check(false, "five distinct hotkeys are accepted");
     }
     const std::array duplicate_hotkeys{
         wardogs::parse_hotkey(L"F8"), wardogs::parse_hotkey(L"F9"),
-        wardogs::parse_hotkey(L"F10"), wardogs::parse_hotkey(L"F8")};
+        wardogs::parse_hotkey(L"F10"), wardogs::parse_hotkey(L"F11"),
+        wardogs::parse_hotkey(L"F8")};
     rejects_with_message(
         [&] { wardogs::validate_unique_hotkeys(duplicate_hotkeys); },
-        "四个热键不能重复", "a duplicate quick target hotkey is rejected");
+        "热键不能重复", "a duplicate quick target hotkey is rejected");
 
     wardogs::HotkeyMatcher matcher{unique_hotkeys};
     check(matcher.handle_key_event(VK_F8, true, 0) == 0,

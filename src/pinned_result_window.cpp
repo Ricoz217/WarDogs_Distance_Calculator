@@ -1,6 +1,8 @@
 #include "pinned_result_window.hpp"
 
+#include "app_icon.hpp"
 #include "vehicle_solution_widget.hpp"
+#include "wardogs/hotkeys.hpp"
 
 #include <Windows.h>
 
@@ -14,6 +16,7 @@
 #include <QIcon>
 #include <QImage>
 #include <QLabel>
+#include <QKeySequenceEdit>
 #include <QMouseEvent>
 #include <QPaintEvent>
 #include <QPainter>
@@ -31,6 +34,8 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <exception>
+#include <utility>
 
 namespace {
 
@@ -180,8 +185,8 @@ PinnedResultWindow::PinnedResultWindow(std::function<void()> exit_callback,
 
 PinnedResultWindow::PinnedResultWindow(
     std::function<void()> exit_callback, Preferences preferences,
-    std::function<void(Preferences)> preferences_changed, QWidget* parent)
-    : QWidget(parent, Qt::Tool | Qt::FramelessWindowHint |
+    PreferencesChanged preferences_changed, QWidget* parent)
+    : QWidget(parent, Qt::Window | Qt::FramelessWindowHint |
                           Qt::WindowStaysOnTopHint |
                           Qt::WindowDoesNotAcceptFocus),
       exit_callback_(std::move(exit_callback)),
@@ -198,6 +203,7 @@ PinnedResultWindow::PinnedResultWindow(
     setCursor(Qt::ArrowCursor);
     setWindowOpacity(preferences_.opacity_percent / 100.0);
     setWindowTitle(QStringLiteral("War Dogs 射表结果"));
+    setWindowIcon(wardogs_application_icon());
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
     frame_ = new QFrame;
@@ -231,6 +237,7 @@ PinnedResultWindow::PinnedResultWindow(
     resize(default_size(false));
     build_context_menu();
     apply_font_scale();
+    apply_mouse_transparency();
 }
 
 void PinnedResultWindow::build_context_menu() {
@@ -238,9 +245,14 @@ void PinnedResultWindow::build_context_menu() {
     context_menu_->setObjectName(QStringLiteral("pinnedContextMenu"));
     set_popup_opacity(context_menu_, preferences_.opacity_percent / 100.0);
 
-    auto* layout = new QHBoxLayout(context_menu_);
-    layout->setContentsMargins(1, 1, 8, 1);
-    layout->setSpacing(8);
+    auto* layout = new QVBoxLayout(context_menu_);
+    layout->setContentsMargins(1, 1, 8, 7);
+    layout->setSpacing(3);
+
+    auto* controls = new QWidget(context_menu_);
+    auto* controls_layout = new QHBoxLayout(controls);
+    controls_layout->setContentsMargins(0, 0, 0, 0);
+    controls_layout->setSpacing(8);
 
     lock_button_ = new QToolButton(context_menu_);
     lock_button_->setObjectName(QStringLiteral("pinnedLockButton"));
@@ -248,7 +260,7 @@ void PinnedResultWindow::build_context_menu() {
     lock_button_->setAutoRaise(false);
     lock_button_->setFixedSize(42, 40);
     lock_button_->setIconSize(QSize(22, 22));
-    layout->addWidget(lock_button_);
+    controls_layout->addWidget(lock_button_);
 
     opacity_slider_ = new JumpSlider(Qt::Horizontal, context_menu_);
     opacity_slider_->setObjectName(QStringLiteral("pinnedOpacitySlider"));
@@ -259,13 +271,56 @@ void PinnedResultWindow::build_context_menu() {
     opacity_slider_->setToolTip(
         QStringLiteral("卡片透明度：%1%").arg(preferences_.opacity_percent));
     opacity_slider_->setAccessibleName(QStringLiteral("结果卡片透明度"));
-    layout->addWidget(opacity_slider_);
+    controls_layout->addWidget(opacity_slider_);
+    layout->addWidget(controls);
+
+    auto* hotkey_row = new QWidget(context_menu_);
+    hotkey_row->setObjectName(QStringLiteral("pinnedUnlockRow"));
+    auto* hotkey_layout = new QHBoxLayout(hotkey_row);
+    hotkey_layout->setContentsMargins(8, 1, 0, 0);
+    hotkey_layout->setSpacing(8);
+    auto* hotkey_label = new QLabel(QStringLiteral("解除固定"), hotkey_row);
+    hotkey_label->setObjectName(QStringLiteral("pinnedUnlockLabel"));
+    hotkey_layout->addWidget(hotkey_label);
+    unlock_hotkey_ = new QKeySequenceEdit(
+        QKeySequence(QString::fromStdWString(preferences_.unlock_hotkey)),
+        hotkey_row);
+    unlock_hotkey_->setObjectName(QStringLiteral("pinnedUnlockHotkey"));
+    unlock_hotkey_->setMaximumSequenceLength(1);
+    unlock_hotkey_->setFixedWidth(120);
+    unlock_hotkey_->setToolTip(QStringLiteral("锁定后按此全局快捷键解除固定"));
+    unlock_hotkey_->setAccessibleName(QStringLiteral("解除固定快捷键"));
+    hotkey_layout->addWidget(unlock_hotkey_, 1);
+    layout->addWidget(hotkey_row);
 
     connect(lock_button_, &QToolButton::toggled, this,
             [this](bool locked) { set_locked(locked); });
     connect(opacity_slider_, &QSlider::valueChanged, this,
             [this](int value) { set_opacity_percent(value); });
+    connect(unlock_hotkey_, &QKeySequenceEdit::editingFinished, this, [this] {
+        try {
+            const auto parsed = wardogs::parse_hotkey(
+                unlock_hotkey_->keySequence()
+                    .toString(QKeySequence::PortableText)
+                    .toStdWString());
+            auto candidate = preferences_;
+            candidate.unlock_hotkey = parsed.display;
+            if (!commit_preferences(std::move(candidate))) {
+                update_unlock_hotkey_control();
+                unlock_hotkey_->setToolTip(
+                    QStringLiteral("快捷键不可用或与其他全局热键重复"));
+                return;
+            }
+            update_unlock_hotkey_control();
+            unlock_hotkey_->setToolTip(
+                QStringLiteral("锁定后按此全局快捷键解除固定"));
+        } catch (const std::exception&) {
+            update_unlock_hotkey_control();
+            unlock_hotkey_->setToolTip(QStringLiteral("请输入有效的单组快捷键"));
+        }
+    });
     update_lock_control();
+    update_unlock_hotkey_control();
 }
 
 void PinnedResultWindow::update_lock_control() {
@@ -279,18 +334,33 @@ void PinnedResultWindow::update_lock_control() {
     lock_button_->setAccessibleName(lock_button_->toolTip());
 }
 
-void PinnedResultWindow::notify_preferences_changed() {
-    if (preferences_changed_) preferences_changed_(preferences_);
+void PinnedResultWindow::update_unlock_hotkey_control() {
+    if (!unlock_hotkey_) return;
+    const QSignalBlocker blocker(unlock_hotkey_);
+    unlock_hotkey_->setKeySequence(
+        QKeySequence(QString::fromStdWString(preferences_.unlock_hotkey)));
+}
+
+bool PinnedResultWindow::commit_preferences(Preferences preferences) {
+    if (preferences_changed_ && !preferences_changed_(preferences)) return false;
+    preferences_ = std::move(preferences);
+    return true;
 }
 
 void PinnedResultWindow::set_locked(bool locked) {
     if (preferences_.locked == locked) return;
-    preferences_.locked = locked;
+    auto candidate = preferences_;
+    candidate.locked = locked;
+    if (!commit_preferences(std::move(candidate))) {
+        update_lock_control();
+        return;
+    }
     dragging_ = false;
     resize_edges_.clear();
     setCursor(Qt::ArrowCursor);
     update_lock_control();
-    notify_preferences_changed();
+    if (locked && context_menu_) context_menu_->hide();
+    apply_mouse_transparency();
 }
 
 void PinnedResultWindow::set_opacity_percent(int opacity_percent) {
@@ -303,7 +373,9 @@ void PinnedResultWindow::set_opacity_percent(int opacity_percent) {
                 QStringLiteral("卡片透明度：%1%").arg(clamped));
         return;
     }
-    preferences_.opacity_percent = clamped;
+    auto candidate = preferences_;
+    candidate.opacity_percent = clamped;
+    if (!commit_preferences(std::move(candidate))) return;
     setWindowOpacity(clamped / 100.0);
     if (context_menu_) set_popup_opacity(context_menu_, clamped / 100.0);
     if (opacity_slider_) {
@@ -312,7 +384,40 @@ void PinnedResultWindow::set_opacity_percent(int opacity_percent) {
         opacity_slider_->setToolTip(
             QStringLiteral("卡片透明度：%1%").arg(clamped));
     }
-    notify_preferences_changed();
+}
+
+void PinnedResultWindow::apply_mouse_transparency() {
+    const bool was_visible = isVisible();
+    setAttribute(Qt::WA_TransparentForMouseEvents, preferences_.locked);
+    const bool has_input_transparency =
+        windowFlags().testFlag(Qt::WindowTransparentForInput);
+    if (has_input_transparency != preferences_.locked) {
+        const QRect previous_geometry = geometry();
+        auto flags = windowFlags();
+        if (preferences_.locked)
+            flags |= Qt::WindowTransparentForInput;
+        else
+            flags &= ~Qt::WindowTransparentForInput;
+        setWindowFlags(flags);
+        setGeometry(previous_geometry);
+    }
+    const auto handle = reinterpret_cast<HWND>(winId());
+    auto extended_style = GetWindowLongPtrW(handle, GWL_EXSTYLE);
+    extended_style |= WS_EX_LAYERED | WS_EX_NOACTIVATE;
+    extended_style |= WS_EX_APPWINDOW;
+    extended_style &= ~static_cast<LONG_PTR>(WS_EX_TOOLWINDOW);
+    if (preferences_.locked)
+        extended_style |= WS_EX_TRANSPARENT;
+    else
+        extended_style &= ~static_cast<LONG_PTR>(WS_EX_TRANSPARENT);
+    SetWindowLongPtrW(handle, GWL_EXSTYLE, extended_style);
+    SetWindowPos(handle, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                     SWP_FRAMECHANGED);
+    if (was_visible && !isVisible()) {
+        show();
+        raise();
+    }
 }
 
 QWidget* PinnedResultWindow::result_card(const QString& color, QLabel*& value) {
@@ -343,6 +448,11 @@ bool PinnedResultWindow::event(QEvent* event) {
 bool PinnedResultWindow::nativeEvent(const QByteArray& event_type, void* message,
                                      qintptr* result) {
     auto* native_message = static_cast<MSG*>(message);
+    if (native_message && native_message->message == WM_NCHITTEST &&
+        preferences_.locked) {
+        *result = HTTRANSPARENT;
+        return true;
+    }
     if (native_message && native_message->message == WM_SETCURSOR) {
         LPCWSTR cursor_id = IDC_ARROW;
         if (!preferences_.locked) {
@@ -468,6 +578,11 @@ void PinnedResultWindow::resizeEvent(QResizeEvent* event) {
     QWidget::resizeEvent(event);
     mode_sizes_[vehicle_mode_] = event->size();
     if (low_ && !applying_font_scale_) apply_font_scale();
+}
+
+void PinnedResultWindow::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    apply_mouse_transparency();
 }
 
 void PinnedResultWindow::mousePressEvent(QMouseEvent* event) {

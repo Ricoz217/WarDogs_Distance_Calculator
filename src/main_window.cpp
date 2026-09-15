@@ -1,7 +1,9 @@
 #include "main_window.hpp"
+#include "app_icon.hpp"
 #include "selection_overlay.hpp"
 #include "settings_dialog.hpp"
 #include "window_title_bar.hpp"
+#include "windows_taskbar.hpp"
 
 #include "wardogs/capture.hpp"
 #include "wardogs/core.hpp"
@@ -302,6 +304,20 @@ public:
         else if (saved_region_invalid)
             set_status(QStringLiteral("已保存的 OCR 区域不可用，请重新设置"), true);
         enable_rounded_window_corners(this);
+        unlock_event_ = wardogs_ui::create_pinned_unlock_event();
+        if (unlock_event_) {
+            auto* unlock_poll = new QTimer(this);
+            unlock_poll->setInterval(80);
+            connect(unlock_poll, &QTimer::timeout, this, [this] {
+                if (wardogs_ui::consume_pinned_unlock_event(unlock_event_))
+                    unlock_pinned_window("taskbar");
+            });
+            unlock_poll->start();
+        } else {
+            wardogs::log_warning(
+                "pinned.unlock_event_create_failed windows_error=" +
+                std::to_string(GetLastError()));
+        }
         try { register_hotkeys(settings_); }
         catch (const std::exception& error) {
             wardogs::log_error("hotkey.startup_failed error=" +
@@ -314,6 +330,7 @@ public:
     ~MainWindow() override {
         unregister_hotkeys();
         if (worker_.joinable()) worker_.join();
+        if (unlock_event_) CloseHandle(unlock_event_);
     }
 
 protected:
@@ -341,6 +358,7 @@ private:
     std::unique_ptr<wardogs::RapidOcr> rapid_;
     std::unique_ptr<wardogs::WindowsOcr> windows_;
     wardogs::GlobalHotkeyListener hotkey_listener_;
+    HANDLE unlock_event_{};
     std::jthread worker_;
     std::atomic_bool busy_{false};
     SelectionOverlay selector_;
@@ -876,13 +894,40 @@ private:
         if (!pinned_window_) {
             pinned_window_ = std::make_unique<PinnedResultWindow>(
                 [this] { exit_pinned_mode(); }, settings_.pinned_card,
-                [this](PinnedResultWindow::Preferences preferences) {
-                    settings_.pinned_card = preferences;
+                [this](const PinnedResultWindow::Preferences& preferences) {
+                    const auto previous = settings_;
+                    auto candidate = settings_;
+                    candidate.pinned_card = preferences;
+                    const bool hotkey_changed =
+                        candidate.pinned_card.unlock_hotkey !=
+                        previous.pinned_card.unlock_hotkey;
+                    if (hotkey_changed) {
+                        try {
+                            register_hotkeys(candidate);
+                        } catch (const std::exception& error) {
+                            try { register_hotkeys(previous); } catch (...) {}
+                            wardogs::log_error(
+                                "pinned.unlock_hotkey_rejected error=" +
+                                std::string(error.what()));
+                            return false;
+                        }
+                        wardogs::log_info(
+                            "pinned.unlock_hotkey_changed value=" +
+                            one_line_utf8(qtext(
+                                candidate.pinned_card.unlock_hotkey)));
+                    }
+                    if (candidate.pinned_card.locked !=
+                        previous.pinned_card.locked)
+                        wardogs::log_info(
+                            std::string("pinned.lock_changed locked=") +
+                            (candidate.pinned_card.locked ? "1" : "0"));
+                    settings_ = candidate;
                     try {
                         wardogs::save_settings(settings_);
                     } catch (...) {
                         // Display preferences remain active for this session.
                     }
+                    return true;
                 });
         }
         sync_pinned_result();
@@ -1300,11 +1345,23 @@ private:
         hotkey_listener_.stop();
     }
 
+    void unlock_pinned_window(const char* source) {
+        if (!pinned_mode_ || !pinned_window_ || !pinned_window_->is_locked()) {
+            wardogs::log_info(std::string("pinned.unlock_ignored source=") +
+                              source);
+            return;
+        }
+        wardogs::log_info(std::string("pinned.unlocked source=") + source);
+        pinned_window_->set_locked(false);
+    }
+
     void register_hotkeys(const wardogs::AppSettings& settings) {
-        const std::array values{wardogs::parse_hotkey(settings.region_hotkey),
-                                wardogs::parse_hotkey(settings.base_hotkey),
-                                wardogs::parse_hotkey(settings.target_hotkey),
-                                wardogs::parse_hotkey(settings.quick_target_hotkey)};
+        const std::array values{
+            wardogs::parse_hotkey(settings.region_hotkey),
+            wardogs::parse_hotkey(settings.base_hotkey),
+            wardogs::parse_hotkey(settings.target_hotkey),
+            wardogs::parse_hotkey(settings.quick_target_hotkey),
+            wardogs::parse_hotkey(settings.pinned_card.unlock_hotkey)};
         wardogs::validate_unique_hotkeys(values);
         {
             std::ostringstream diagnostic;
@@ -1330,6 +1387,7 @@ private:
                 else if (index == 1) start_ocr(OcrAction::base);
                 else if (index == 2) start_ocr(OcrAction::target);
                 else if (index == 3) begin_quick_target();
+                else if (index == 4) unlock_pinned_window("hotkey");
             }, Qt::QueuedConnection);
         });
     }
@@ -1357,6 +1415,10 @@ QFrame#pinnedFrame QFrame#vehicleSolutionCard {
     background:#0b1220; border:1px solid #334155; border-radius:8px;
 }
 QWidget#pinnedContextMenu { background:transparent; }
+QLabel#pinnedUnlockLabel { color:#8190a3; font-size:11px; }
+QKeySequenceEdit#pinnedUnlockHotkey { background:#0b1220; border:1px solid transparent;
+    border-radius:7px; padding:5px 7px; font-size:12px; }
+QKeySequenceEdit#pinnedUnlockHotkey:focus { border-color:#3569ae; }
 QToolButton#pinnedLockButton { background:transparent; border:0;
     border-radius:9px; padding:5px; }
 QToolButton#pinnedLockButton:hover { background:#1e293b; }
@@ -1431,10 +1493,18 @@ QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical { height:0; }
 int run_application(int argc, char* argv[]) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     winrt::init_apartment(winrt::apartment_type::multi_threaded);
+    wardogs_ui::configure_taskbar_identity();
     QApplication::setHighDpiScaleFactorRoundingPolicy(
         Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
     QApplication app(argc, argv);
+    QApplication::setApplicationName(
+        QStringLiteral("WarDogsDistanceCalculator"));
+    QApplication::setApplicationDisplayName(
+        QStringLiteral("War Dogs 射表计算"));
     QApplication::setApplicationVersion(QStringLiteral(WARDOGS_VERSION));
+    QApplication::setWindowIcon(wardogs_application_icon());
+    if (app.arguments().contains(QStringLiteral("--unlock-pinned")))
+        return wardogs_ui::signal_pinned_unlock_event() ? 0 : 1;
     const auto preferred_log =
         executable_directory() / L"WarDogsDistanceCalculator.log";
     if (!wardogs::initialize_session_log(preferred_log, WARDOGS_VERSION)) {
@@ -1449,6 +1519,8 @@ int run_application(int argc, char* argv[]) {
                       one_line_utf8(qtext(wardogs::active_log_path().wstring())));
     wardogs::log_info(std::string("application.privilege elevated=") +
                       (process_is_elevated() ? "1" : "0"));
+    wardogs::log_info(std::string("taskbar.unlock_action_installed success=") +
+                      (wardogs_ui::install_unlock_jump_list_task() ? "1" : "0"));
     QObject::connect(&app, &QGuiApplication::applicationStateChanged,
                      [](Qt::ApplicationState state) {
         wardogs::log_info("application.state value=" +
