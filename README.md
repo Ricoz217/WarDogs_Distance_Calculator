@@ -4,6 +4,8 @@ Windows 游戏坐标 OCR 与射表计算工具。方位角以正北（Y 轴正�
 
 当前版本：`1.3.0`
 
+使用教程：[War Dogs 射表计算器视频教程（Bilibili）](https://www.bilibili.com/video/BV1d3Y16MEWh)
+
 ## 功能
 
 - RapidOCR CPU 识别为首选，Windows 系统 OCR 作为低内存备用
