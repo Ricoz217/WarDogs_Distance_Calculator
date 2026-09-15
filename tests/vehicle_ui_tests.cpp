@@ -2,6 +2,8 @@
 #include "vehicle_solution_widget.hpp"
 #include "window_title_bar.hpp"
 
+#include <Windows.h>
+
 #include <QApplication>
 #include <QContextMenuEvent>
 #include <QHoverEvent>
@@ -49,6 +51,15 @@ int main(int argc, char* argv[]) {
                   !button->accessibleName().isEmpty(),
               "caption controls are icon-only and remain accessible");
     }
+    NCCALCSIZE_PARAMS frame_parameters{};
+    MSG frame_message{};
+    frame_message.message = WM_NCCALCSIZE;
+    frame_message.wParam = TRUE;
+    frame_message.lParam = reinterpret_cast<LPARAM>(&frame_parameters);
+    qintptr frame_result = -1;
+    check(handle_frameless_native_event(&host, &frame_message, &frame_result) &&
+              frame_result == 0,
+          "custom chrome owns non-client sizing after a window is shown again");
 
     VehicleSolutionWidget full(wardogs::Arc::low);
     full.set_unavailable(QStringLiteral("3100 m"), QStringLiteral("203.0° SW"));

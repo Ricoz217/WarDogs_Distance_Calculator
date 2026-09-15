@@ -189,8 +189,24 @@ void enable_rounded_window_corners(QWidget* window) {
 bool handle_frameless_native_event(QWidget* window, void* message,
                                    qintptr* result) {
     auto* native_message = static_cast<MSG*>(message);
-    if (!native_message || native_message->message != WM_NCHITTEST ||
-        window->isMaximized())
+    if (!native_message) return false;
+
+    if (native_message->message == WM_NCCALCSIZE) {
+        if (native_message->wParam && window->isMaximized()) {
+            auto* parameters = reinterpret_cast<NCCALCSIZE_PARAMS*>(
+                native_message->lParam);
+            MONITORINFO monitor_info{sizeof(MONITORINFO)};
+            const auto monitor = MonitorFromWindow(
+                reinterpret_cast<HWND>(window->winId()),
+                MONITOR_DEFAULTTONEAREST);
+            if (parameters && GetMonitorInfoW(monitor, &monitor_info))
+                parameters->rgrc[0] = monitor_info.rcWork;
+        }
+        *result = 0;
+        return true;
+    }
+
+    if (native_message->message != WM_NCHITTEST || window->isMaximized())
         return false;
 
     RECT frame{};
