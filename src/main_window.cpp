@@ -26,6 +26,7 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QFrame>
+#include <QFontDatabase>
 #include <QGroupBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -324,9 +325,9 @@ private:
         root->addLayout(heading);
         update_mode_button();
 
-        terrain_group_ = new QGroupBox(QStringLiteral("高度模型"));
+        terrain_group_ = new QGroupBox;
         auto* terrain_layout = new QVBoxLayout(terrain_group_);
-        terrain_layout->setContentsMargins(14, 20, 14, 14);
+        terrain_layout->setContentsMargins(14, 14, 14, 14);
         terrain_layout->setSpacing(8);
         terrain_selector_ = new QComboBox;
         terrain_selector_->addItem(QStringLiteral("等高假设（无需地图包）"));
@@ -342,9 +343,9 @@ private:
         root->addWidget(terrain_group_);
         update_terrain_summary();
 
-        auto* coordinates = new QGroupBox(QStringLiteral("坐标"));
+        auto* coordinates = new QGroupBox;
         auto* coordinate_layout = new QVBoxLayout(coordinates);
-        coordinate_layout->setContentsMargins(14, 20, 14, 14);
+        coordinate_layout->setContentsMargins(14, 14, 14, 14);
         coordinate_layout->setSpacing(8);
         base_summary_ = new QLabel;
         target_summary_ = new QLabel;
@@ -375,9 +376,9 @@ private:
         calibration_group_->hide();
         root->addWidget(calibration_group_);
 
-        mortar_result_group_ = new QGroupBox(QStringLiteral("计算结果"));
+        mortar_result_group_ = new QGroupBox;
         auto* result_layout = new QVBoxLayout(mortar_result_group_);
-        result_layout->setContentsMargins(14, 20, 14, 14);
+        result_layout->setContentsMargins(14, 14, 14, 14);
         result_layout->setSpacing(8);
         auto* cards = new QHBoxLayout;
         cards->setSpacing(12);
@@ -392,11 +393,11 @@ private:
         result_layout->addWidget(raw_result_);
         root->addWidget(mortar_result_group_);
 
-        vehicle_result_group_ = new QGroupBox(QStringLiteral("SPH-2 修正射表"));
+        vehicle_result_group_ = new QGroupBox;
         vehicle_result_group_->setObjectName(QStringLiteral("vehicleResultGroup"));
         vehicle_result_group_->setProperty("error", false);
         auto* vehicle_results = new QVBoxLayout(vehicle_result_group_);
-        vehicle_results->setContentsMargins(10, 18, 10, 10);
+        vehicle_results->setContentsMargins(10, 10, 10, 10);
         vehicle_results->setSpacing(7);
         low_solution_ = new VehicleSolutionWidget(wardogs::Arc::low);
         high_solution_ = new VehicleSolutionWidget(wardogs::Arc::high);
@@ -409,9 +410,9 @@ private:
         vehicle_result_group_->hide();
         root->addWidget(vehicle_result_group_);
 
-        auto* ocr = new QGroupBox(QStringLiteral("OCR 与热键"));
+        auto* ocr = new QGroupBox;
         auto* ocr_layout = new QVBoxLayout(ocr);
-        ocr_layout->setContentsMargins(14, 20, 14, 14);
+        ocr_layout->setContentsMargins(14, 14, 14, 14);
         ocr_layout->setSpacing(8);
         engine_summary_ = new QLabel;
         region_summary_ = new QLabel(QStringLiteral("OCR 区域：尚未设置"));
@@ -470,9 +471,9 @@ private:
     }
 
     QGroupBox* build_calibration_group() {
-        auto* group = new QGroupBox(QStringLiteral("当前炮位 · 两发校准"));
+        auto* group = new QGroupBox;
         auto* layout = new QGridLayout(group);
-        layout->setContentsMargins(14, 20, 14, 14);
+        layout->setContentsMargins(14, 14, 14, 14);
         layout->setHorizontalSpacing(8);
         layout->setVerticalSpacing(7);
         layout->addWidget(new QLabel, 0, 0);
@@ -1194,7 +1195,7 @@ private:
 };
 
 constexpr auto style_sheet = R"(
-QWidget { color:#dbe4ef; font-family:"Microsoft YaHei UI"; font-size:13px; }
+QWidget { color:#dbe4ef; font-size:13px; }
 QMainWindow,QDialog { background:#0b1018; }
 QFrame#appFrame { background:#0b1018; border:3px solid transparent; }
 QFrame#appFrame[error="true"] { border-color:#ef4444; }
@@ -1239,17 +1240,12 @@ QLabel#solutionMil { color:#c4b5fd; }
 QLabel#solutionMil[unavailable="true"] { color:#fca5a5; font-size:19px; }
 QGroupBox#vehicleResultGroup[error="true"] { border:2px solid #ef4444; }
 QGroupBox { background:#111925; border:0; border-radius:12px;
-            margin-top:10px; padding-top:12px; font-weight:400; }
-QGroupBox::title { subcontrol-origin:margin; left:13px; padding:0 3px;
-                   color:#e8eef6; font-weight:700; }
+            margin-top:0; padding-top:0; font-weight:500; }
 QLineEdit,QPlainTextEdit,QKeySequenceEdit,QComboBox { background:#0c1420;
     border:1px solid transparent; border-radius:8px; padding:8px 9px; color:#f3f6fa;
     selection-background-color:#2563eb; }
-QLineEdit:hover,QPlainTextEdit:hover,QKeySequenceEdit:hover,QComboBox:hover {
-    background:#0f1927;
-}
 QLineEdit:focus,QPlainTextEdit:focus,QKeySequenceEdit:focus,QComboBox:focus {
-    background:#0f1927; border-color:#3569ae;
+    border-color:#3569ae;
 }
 QComboBox::drop-down { border:0; width:28px; }
 QComboBox QAbstractItemView { background:#131d2b; border:0;
@@ -1290,6 +1286,13 @@ int run_application(int argc, char* argv[]) {
     QApplication app(argc, argv);
     QApplication::setApplicationVersion(QStringLiteral(WARDOGS_VERSION));
     QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+    auto interface_font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+    interface_font.setFamilies({QStringLiteral("Microsoft YaHei UI"),
+                                QStringLiteral("Microsoft YaHei"),
+                                QStringLiteral("Segoe UI"),
+                                interface_font.family()});
+    interface_font.setWeight(QFont::Medium);
+    app.setFont(interface_font);
     app.setStyleSheet(QString::fromUtf8(style_sheet));
     MainWindow window;
     window.show();

@@ -53,9 +53,9 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
     subtitle->setObjectName(QStringLiteral("muted"));
     root->addWidget(subtitle);
 
-    auto* panel = new QGroupBox(QStringLiteral("识别与热键"));
+    auto* panel = new QGroupBox;
     auto* form = new QFormLayout(panel);
-    form->setContentsMargins(14, 18, 14, 14);
+    form->setContentsMargins(14, 14, 14, 14);
     form->setHorizontalSpacing(16);
     form->setVerticalSpacing(12);
     backend_ = new QComboBox;
