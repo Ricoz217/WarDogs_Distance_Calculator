@@ -129,7 +129,7 @@ void validate_unique_hotkeys(std::span<const Hotkey> hotkeys) {
         for (std::size_t j = i + 1; j < hotkeys.size(); ++j) {
             if (hotkeys[i].modifiers == hotkeys[j].modifiers &&
                 hotkeys[i].virtual_key == hotkeys[j].virtual_key) {
-                throw std::invalid_argument("四个热键不能重复");
+                throw std::invalid_argument("热键不能重复");
             }
         }
     }

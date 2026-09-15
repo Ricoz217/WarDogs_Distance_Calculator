@@ -14,9 +14,11 @@
 
 class QFrame;
 class QContextMenuEvent;
+class QKeySequenceEdit;
 class QLabel;
 class QMouseEvent;
 class QResizeEvent;
+class QShowEvent;
 class QSlider;
 class QToolButton;
 class VehicleSolutionWidget;
@@ -24,12 +26,13 @@ class VehicleSolutionWidget;
 class PinnedResultWindow final : public QWidget {
 public:
     using Preferences = wardogs::PinnedCardPreferences;
+    using PreferencesChanged = std::function<bool(const Preferences&)>;
 
     explicit PinnedResultWindow(std::function<void()> exit_callback,
                                 QWidget* parent = nullptr);
     PinnedResultWindow(std::function<void()> exit_callback,
                        Preferences preferences,
-                       std::function<void(Preferences)> preferences_changed,
+                       PreferencesChanged preferences_changed,
                        QWidget* parent = nullptr);
 
     void set_mode(bool vehicle_mode);
@@ -49,6 +52,7 @@ protected:
     bool nativeEvent(const QByteArray& event_type, void* message,
                      qintptr* result) override;
     void resizeEvent(QResizeEvent* event) override;
+    void showEvent(QShowEvent* event) override;
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
@@ -66,16 +70,19 @@ private:
     void apply_font_scale();
     void build_context_menu();
     void update_lock_control();
-    void notify_preferences_changed();
+    void update_unlock_hotkey_control();
+    [[nodiscard]] bool commit_preferences(Preferences preferences);
+    void apply_mouse_transparency();
     [[nodiscard]] QPoint context_menu_position() const;
 
     std::function<void()> exit_callback_;
-    std::function<void(Preferences)> preferences_changed_;
+    PreferencesChanged preferences_changed_;
     Preferences preferences_;
     QFrame* frame_{};
     QWidget* context_menu_{};
     QToolButton* lock_button_{};
     QSlider* opacity_slider_{};
+    QKeySequenceEdit* unlock_hotkey_{};
     QWidget *mortar_panel_{}, *vehicle_panel_{};
     QLabel *distance_{}, *bearing_{};
     VehicleSolutionWidget *low_{}, *high_{};

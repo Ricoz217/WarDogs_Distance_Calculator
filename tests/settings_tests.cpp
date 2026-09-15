@@ -31,6 +31,7 @@ int main() {
     saved.region_hotkey = L"Ctrl+F8";
     saved.pinned_card.locked = true;
     saved.pinned_card.opacity_percent = 63;
+    saved.pinned_card.unlock_hotkey = L"Ctrl+Shift+U";
     saved.capture_region = CaptureRegion{L"\\\\.\\DISPLAY2", {13, 27, 413, 81}};
     wardogs::save_settings_to(path, saved);
 
@@ -41,6 +42,8 @@ int main() {
           "the pinned card lock state survives the explicit-path round trip");
     check(loaded.pinned_card.opacity_percent == 63,
           "the pinned card opacity survives the explicit-path round trip");
+    check(loaded.pinned_card.unlock_hotkey == L"Ctrl+Shift+U",
+          "the pinned-card unlock hotkey survives the explicit-path round trip");
     check(loaded.capture_region.has_value(),
           "a configured OCR capture region is restored");
     if (loaded.capture_region) {

@@ -1,4 +1,5 @@
 #include "window_title_bar.hpp"
+#include "app_icon.hpp"
 
 #include <Windows.h>
 #include <dwmapi.h>
@@ -16,16 +17,15 @@
 
 namespace {
 
-enum class CaptionGlyph { minimize, maximize, restore, close, app };
+enum class CaptionGlyph { minimize, maximize, restore, close };
 
 QIcon caption_icon(CaptionGlyph glyph) {
-    const QSize size = glyph == CaptionGlyph::app ? QSize(18, 18) : QSize(20, 20);
+    const QSize size(20, 20);
     QPixmap image(size);
     image.fill(Qt::transparent);
     QPainter painter(&image);
     painter.setRenderHint(QPainter::Antialiasing);
-    const QColor color(glyph == CaptionGlyph::app ? QStringLiteral("#67e8f9")
-                                                  : QStringLiteral("#cbd5e1"));
+    const QColor color(QStringLiteral("#cbd5e1"));
     painter.setPen(QPen(color, 1.5, Qt::SolidLine, Qt::RoundCap,
                         Qt::RoundJoin));
     painter.setBrush(Qt::NoBrush);
@@ -44,14 +44,6 @@ QIcon caption_icon(CaptionGlyph glyph) {
     case CaptionGlyph::close:
         painter.drawLine(QPointF(5.5, 5.5), QPointF(14.5, 14.5));
         painter.drawLine(QPointF(14.5, 5.5), QPointF(5.5, 14.5));
-        break;
-    case CaptionGlyph::app:
-        painter.drawEllipse(QPointF(9, 9), 5.5, 5.5);
-        painter.drawEllipse(QPointF(9, 9), 1.8, 1.8);
-        painter.drawLine(QPointF(9, 1), QPointF(9, 4));
-        painter.drawLine(QPointF(9, 14), QPointF(9, 17));
-        painter.drawLine(QPointF(1, 9), QPointF(4, 9));
-        painter.drawLine(QPointF(14, 9), QPointF(17, 9));
         break;
     }
     return QIcon(image);
@@ -83,7 +75,7 @@ WindowTitleBar::WindowTitleBar(QWidget* host) : QWidget(host), host_(host) {
     layout->setSpacing(6);
 
     auto* app_icon = new QLabel;
-    app_icon->setPixmap(caption_icon(CaptionGlyph::app).pixmap(18, 18));
+    app_icon->setPixmap(wardogs_application_icon().pixmap(18, 18));
     app_icon->setFixedSize(20, 20);
     app_icon->setAttribute(Qt::WA_TransparentForMouseEvents);
     layout->addWidget(app_icon);
