@@ -1,10 +1,13 @@
 #include "wardogs/core.hpp"
 #include "wardogs/hotkeys.hpp"
+#include "wardogs/logger.hpp"
 #include "wardogs/settings.hpp"
 
 #include <array>
 #include <cmath>
 #include <functional>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -156,6 +159,40 @@ int main() {
     modifier_matcher.handle_key_event(VK_F8, false, MOD_CONTROL);
     check(modifier_matcher.handle_key_event(VK_F8, true, 0) == 0,
           "the unmodified form remains independently available");
+
+    const auto log_path =
+        std::filesystem::temp_directory_path() / "wardogs_session_logger_test.log";
+    {
+        std::ofstream stale(log_path);
+        stale << "previous session marker";
+    }
+    check(wardogs::initialize_session_log(log_path, "test-version"),
+          "session logger opens a local file");
+    wardogs::log_info("hotkey diagnostic marker");
+    wardogs::shutdown_session_log();
+    std::ifstream first_log(log_path);
+    const std::string first_contents((std::istreambuf_iterator<char>(first_log)),
+                                     std::istreambuf_iterator<char>());
+    check(first_contents.find("previous session marker") == std::string::npos,
+          "starting the logger replaces the previous run");
+    check(first_contents.find("session.start version=test-version") !=
+              std::string::npos &&
+              first_contents.find("hotkey diagnostic marker") != std::string::npos &&
+              first_contents.find("session.end") != std::string::npos,
+          "session log contains lifecycle and diagnostic entries");
+    first_log.close();
+    check(wardogs::initialize_session_log(log_path, "next-version"),
+          "session logger can start a later run");
+    wardogs::shutdown_session_log();
+    std::ifstream second_log(log_path);
+    const std::string second_contents((std::istreambuf_iterator<char>(second_log)),
+                                      std::istreambuf_iterator<char>());
+    check(second_contents.find("hotkey diagnostic marker") == std::string::npos &&
+              second_contents.find("version=next-version") != std::string::npos,
+          "a later run replaces all earlier diagnostic lines");
+    second_log.close();
+    std::error_code remove_error;
+    std::filesystem::remove(log_path, remove_error);
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";

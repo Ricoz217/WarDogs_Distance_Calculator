@@ -6,6 +6,7 @@
 #include "wardogs/capture.hpp"
 #include "wardogs/core.hpp"
 #include "wardogs/hotkeys.hpp"
+#include "wardogs/logger.hpp"
 #include "wardogs/ocr.hpp"
 #include "wardogs/settings.hpp"
 #include "wardogs/terrain_package.hpp"
@@ -50,11 +51,13 @@
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <regex>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -64,6 +67,12 @@ namespace {
 
 QString qtext(const std::wstring& value) { return QString::fromStdWString(value); }
 QString error_text(const std::exception& error) { return QString::fromUtf8(error.what()); }
+std::string utf8(const QString& value) { return value.toUtf8().toStdString(); }
+std::string one_line_utf8(QString value) {
+    value.replace(QLatin1Char('\r'), QStringLiteral("\\r"));
+    value.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
+    return utf8(value);
+}
 
 std::filesystem::path executable_directory() {
     std::wstring buffer(32768, L'\0');
@@ -199,6 +208,53 @@ QIcon ui_icon(UiGlyph glyph) {
 
 enum class OcrAction { base, target, calibration_impact };
 
+const char* action_name(OcrAction action) {
+    switch (action) {
+    case OcrAction::base: return "base";
+    case OcrAction::target: return "target";
+    case OcrAction::calibration_impact: return "calibration_impact";
+    }
+    return "unknown";
+}
+
+std::string foreground_summary() {
+    const HWND foreground = GetForegroundWindow();
+    DWORD process_id = 0;
+    if (foreground) GetWindowThreadProcessId(foreground, &process_id);
+    std::ostringstream summary;
+    summary << "foreground_pid=" << process_id
+            << " foreground_window=0x" << std::hex
+            << reinterpret_cast<std::uintptr_t>(foreground) << std::dec;
+    if (process_id) {
+        const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
+                                           FALSE, process_id);
+        if (process) {
+            std::wstring path(32768, L'\0');
+            DWORD length = static_cast<DWORD>(path.size());
+            if (QueryFullProcessImageNameW(process, 0, path.data(), &length)) {
+                path.resize(length);
+                summary << " foreground_process="
+                        << one_line_utf8(qtext(
+                               std::filesystem::path(path).filename().wstring()));
+            }
+            CloseHandle(process);
+        }
+    }
+    return summary.str();
+}
+
+bool process_is_elevated() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    TOKEN_ELEVATION elevation{};
+    DWORD size = 0;
+    const bool elevated = GetTokenInformation(token, TokenElevation, &elevation,
+                                               sizeof(elevation), &size) &&
+                          elevation.TokenIsElevated != 0;
+    CloseHandle(token);
+    return elevated;
+}
+
 struct OcrMessage {
     bool success{};
     OcrAction action{OcrAction::target};
@@ -211,7 +267,14 @@ struct OcrMessage {
 class MainWindow final : public QMainWindow {
 public:
     MainWindow() {
-        try { settings_ = wardogs::load_settings(); } catch (...) { settings_ = {}; }
+        try {
+            settings_ = wardogs::load_settings();
+            wardogs::log_info("settings.loaded");
+        } catch (const std::exception& error) {
+            settings_ = {};
+            wardogs::log_warning("settings.load_failed error=" +
+                                 std::string(error.what()));
+        }
         configure_frameless_window(this);
         bool saved_region_invalid = false;
         if (settings_.capture_region) {
@@ -241,8 +304,11 @@ public:
         enable_rounded_window_corners(this);
         try { register_hotkeys(settings_); }
         catch (const std::exception& error) {
+            wardogs::log_error("hotkey.startup_failed error=" +
+                               std::string(error.what()));
             set_status(QStringLiteral("热键启动失败：") + error_text(error), true);
         }
+        wardogs::log_info("window.ready");
     }
 
     ~MainWindow() override {
@@ -786,6 +852,7 @@ private:
     }
 
     void set_status(const QString& text, bool error = false) {
+        if (error) wardogs::log_error("ui.error message=" + utf8(text));
         set_failure_state(error);
         status_->setProperty("error", error);
         status_->style()->unpolish(status_);
@@ -805,6 +872,7 @@ private:
     }
 
     void enter_pinned_mode() {
+        wardogs::log_info("window.enter_pinned_mode");
         if (!pinned_window_) {
             pinned_window_ = std::make_unique<PinnedResultWindow>(
                 [this] { exit_pinned_mode(); }, settings_.pinned_card,
@@ -828,6 +896,7 @@ private:
 
     void exit_pinned_mode() {
         if (!pinned_mode_) return;
+        wardogs::log_info("window.exit_pinned_mode");
         pinned_mode_ = false;
         if (pinned_window_) pinned_window_->hide();
         showNormal();
@@ -1011,6 +1080,7 @@ private:
     }
 
     void begin_region_setup() {
+        wardogs::log_info("selection.region_requested " + foreground_summary());
         if (busy_) { set_status(QStringLiteral("OCR 正在执行，请稍候")); return; }
         hide_for_selection();
         const bool started = selector_.begin(
@@ -1036,6 +1106,7 @@ private:
     }
 
     void begin_quick_target() {
+        wardogs::log_info("selection.quick_target_requested " + foreground_summary());
         if (busy_) { set_status(QStringLiteral("OCR 正在执行，请稍候")); return; }
         hide_for_selection();
         const bool started = selector_.begin(
@@ -1060,6 +1131,9 @@ private:
     }
 
     void start_ocr(OcrAction action) {
+        wardogs::log_info(std::string("ocr.request action=") + action_name(action) +
+                          " saved_region=" + (region_ ? "1" : "0") + " " +
+                          foreground_summary());
         if (action == OcrAction::calibration_impact && !target_) {
             set_status(QStringLiteral("请先设置当前目标，再录入实际落点"), true);
             return;
@@ -1069,11 +1143,30 @@ private:
     }
 
     void start_ocr(const wardogs::CaptureRegion& capture_region, OcrAction action) {
-        if (busy_.exchange(true)) { set_status(QStringLiteral("OCR 正在执行，请稍候")); return; }
+        if (busy_.exchange(true)) {
+            wardogs::log_warning(std::string("ocr.busy action=") + action_name(action));
+            set_status(QStringLiteral("OCR 正在执行，请稍候"));
+            return;
+        }
+        {
+            const auto& rect = capture_region.relative;
+            std::ostringstream diagnostic;
+            diagnostic << "capture.begin action=" << action_name(action)
+                       << " monitor=" << one_line_utf8(qtext(capture_region.monitor_device))
+                       << " rect=" << rect.left << ',' << rect.top << ','
+                       << rect.right << ',' << rect.bottom;
+            wardogs::log_info(diagnostic.str());
+        }
         wardogs::Image image;
-        try { image = wardogs::capture_screen(capture_region); }
+        try {
+            image = wardogs::capture_screen(capture_region);
+            wardogs::log_info("capture.success width=" +
+                              std::to_string(image.width) + " height=" +
+                              std::to_string(image.height));
+        }
         catch (const std::exception& error) {
             busy_ = false;
+            wardogs::log_error("capture.failed error=" + std::string(error.what()));
             set_status(QStringLiteral("截图失败：") + error_text(error), true);
             return;
         }
@@ -1086,6 +1179,10 @@ private:
         QPointer<MainWindow> self(this);
         worker_ = std::jthread([this, self, image = std::move(image), backend,
                                 pattern, action](std::stop_token) mutable {
+            wardogs::log_info(std::string("ocr.worker_started action=") +
+                              action_name(action) + " backend=" +
+                              (backend == wardogs::OcrBackend::rapid ? "rapid"
+                                                                      : "windows"));
             OcrMessage message;
             message.action = action;
             try {
@@ -1110,7 +1207,11 @@ private:
                     message.confidence = result.confidence;
                 }
                 message.success = true;
-            } catch (const std::exception& error) { message.error = error_text(error); }
+            } catch (const std::exception& error) {
+                message.error = error_text(error);
+                wardogs::log_error(std::string("ocr.worker_failed action=") +
+                                   action_name(action) + " error=" + error.what());
+            }
             if (self) QMetaObject::invokeMethod(self,
                 [self, message = std::move(message)]() mutable {
                     if (self) self->finish_ocr(std::move(message));
@@ -1121,10 +1222,23 @@ private:
     void finish_ocr(OcrMessage message) {
         busy_ = false;
         if (!message.success) {
+            wardogs::log_error(std::string("ocr.finished success=0 action=") +
+                               action_name(message.action) + " raw=" +
+                               one_line_utf8(qtext(message.text)) + " error=" +
+                               utf8(message.error));
             ocr_text_->setText(QStringLiteral("OCR 原文：") +
                 (message.text.empty() ? QStringLiteral("（空）") : qtext(message.text)));
             set_status(QStringLiteral("OCR 失败：") + message.error, true);
             return;
+        }
+        {
+            std::ostringstream diagnostic;
+            diagnostic << "ocr.finished success=1 action="
+                       << action_name(message.action) << " point="
+                       << message.point.x << ',' << message.point.y
+                       << " confidence=" << message.confidence << " raw="
+                       << one_line_utf8(qtext(message.text));
+            wardogs::log_info(diagnostic.str());
         }
         QString confidence;
         if (message.confidence > 0.0F)
@@ -1151,6 +1265,7 @@ private:
     }
 
     void edit_settings() {
+        wardogs::log_info("settings.dialog_opened");
         if (busy_) {
             set_status(QStringLiteral("OCR 正在执行，请稍候再修改设置"));
             return;
@@ -1173,6 +1288,7 @@ private:
             settings_ = candidate;
             rapid_.reset(); windows_.reset();
             update_engine_summary(); update_action_labels();
+            wardogs::log_info("settings.saved");
             set_status(QStringLiteral("设置已保存并立即生效"));
         } catch (const std::exception& error) {
             try { register_hotkeys(previous); } catch (...) {}
@@ -1190,8 +1306,26 @@ private:
                                 wardogs::parse_hotkey(settings.target_hotkey),
                                 wardogs::parse_hotkey(settings.quick_target_hotkey)};
         wardogs::validate_unique_hotkeys(values);
+        {
+            std::ostringstream diagnostic;
+            diagnostic << "hotkey.configure";
+            for (std::size_t index = 0; index < values.size(); ++index) {
+                diagnostic << " key" << index << '='
+                           << one_line_utf8(qtext(values[index].display))
+                           << "(vk=0x" << std::hex << std::uppercase
+                           << values[index].virtual_key << ",mod=0x"
+                           << values[index].modifiers << std::dec << ')';
+            }
+            wardogs::log_info(diagnostic.str());
+        }
         hotkey_listener_.start(values, [this](std::size_t index) {
             QMetaObject::invokeMethod(this, [this, index] {
+                wardogs::log_info("hotkey.handle index=" +
+                                  std::to_string(index) + " active_window=" +
+                                  (isActiveWindow() ? "1" : "0") +
+                                  " visible=" + (isVisible() ? "1" : "0") +
+                                  " pinned=" + (pinned_mode_ ? "1" : "0") +
+                                  " " + foreground_summary());
                 if (index == 0) begin_region_setup();
                 else if (index == 1) start_ocr(OcrAction::base);
                 else if (index == 2) start_ocr(OcrAction::target);
@@ -1301,6 +1435,26 @@ int run_application(int argc, char* argv[]) {
         Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
     QApplication app(argc, argv);
     QApplication::setApplicationVersion(QStringLiteral(WARDOGS_VERSION));
+    const auto preferred_log =
+        executable_directory() / L"WarDogsDistanceCalculator.log";
+    if (!wardogs::initialize_session_log(preferred_log, WARDOGS_VERSION)) {
+        try {
+            const auto fallback_log = std::filesystem::temp_directory_path() /
+                                      L"WarDogsDistanceCalculator.log";
+            wardogs::initialize_session_log(fallback_log, WARDOGS_VERSION);
+        } catch (...) {
+        }
+    }
+    wardogs::log_info("application.initialized log_path=" +
+                      one_line_utf8(qtext(wardogs::active_log_path().wstring())));
+    wardogs::log_info(std::string("application.privilege elevated=") +
+                      (process_is_elevated() ? "1" : "0"));
+    QObject::connect(&app, &QGuiApplication::applicationStateChanged,
+                     [](Qt::ApplicationState state) {
+        wardogs::log_info("application.state value=" +
+                          std::to_string(static_cast<int>(state)) + " " +
+                          foreground_summary());
+    });
     QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
     auto interface_font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
     interface_font.setFamilies({QStringLiteral("Microsoft YaHei UI"),
@@ -1312,5 +1466,9 @@ int run_application(int argc, char* argv[]) {
     app.setStyleSheet(QString::fromUtf8(style_sheet));
     MainWindow window;
     window.show();
-    return app.exec();
+    const int exit_code = app.exec();
+    wardogs::log_info("application.event_loop_exit code=" +
+                      std::to_string(exit_code));
+    wardogs::shutdown_session_log();
+    return exit_code;
 }
