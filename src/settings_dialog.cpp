@@ -1,9 +1,7 @@
 #include "settings_dialog.hpp"
+#include "window_title_bar.hpp"
 
 #include "wardogs/hotkeys.hpp"
-
-#include <Windows.h>
-#include <dwmapi.h>
 
 #include <QComboBox>
 #include <QApplication>
@@ -29,20 +27,21 @@ QString error_text(const std::exception& error) {
     return QString::fromUtf8(error.what());
 }
 
-void enable_dark_title_bar(HWND window) {
-    const BOOL enabled = TRUE;
-    DwmSetWindowAttribute(window, 20, &enabled, sizeof(enabled));
-}
-
 }  // namespace
 
 SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
                                QWidget* parent)
     : QDialog(parent), capture_region_(settings.capture_region) {
+    configure_frameless_window(this);
     setWindowTitle(QStringLiteral("设置 · War Dogs 射表计算"));
     setModal(true);
     resize(660, 465);
-    auto* root = new QVBoxLayout(this);
+    auto* outer = new QVBoxLayout(this);
+    outer->setContentsMargins(0, 0, 0, 0);
+    outer->setSpacing(0);
+    outer->addWidget(new WindowTitleBar(this));
+    auto* content = new QWidget;
+    auto* root = new QVBoxLayout(content);
     root->setContentsMargins(22, 20, 22, 20);
     root->setSpacing(12);
     auto* title = new QLabel(QStringLiteral("偏好设置"));
@@ -53,9 +52,9 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
     subtitle->setObjectName(QStringLiteral("muted"));
     root->addWidget(subtitle);
 
-    auto* panel = new QGroupBox(QStringLiteral("识别与热键"));
+    auto* panel = new QGroupBox;
     auto* form = new QFormLayout(panel);
-    form->setContentsMargins(14, 18, 14, 14);
+    form->setContentsMargins(14, 14, 14, 14);
     form->setHorizontalSpacing(16);
     form->setVerticalSpacing(12);
     backend_ = new QComboBox;
@@ -98,7 +97,14 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
     footer->addStretch();
     footer->addWidget(buttons);
     root->addLayout(footer);
-    enable_dark_title_bar(reinterpret_cast<HWND>(winId()));
+    outer->addWidget(content);
+    enable_rounded_window_corners(this);
+}
+
+bool SettingsDialog::nativeEvent(const QByteArray& event_type, void* message,
+                                 qintptr* result) {
+    if (handle_frameless_native_event(this, message, result)) return true;
+    return QDialog::nativeEvent(event_type, message, result);
 }
 
 wardogs::AppSettings SettingsDialog::settings() const {

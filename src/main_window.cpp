@@ -1,10 +1,12 @@
 #include "main_window.hpp"
 #include "selection_overlay.hpp"
 #include "settings_dialog.hpp"
+#include "window_title_bar.hpp"
 
 #include "wardogs/capture.hpp"
 #include "wardogs/core.hpp"
 #include "wardogs/hotkeys.hpp"
+#include "wardogs/logger.hpp"
 #include "wardogs/ocr.hpp"
 #include "wardogs/settings.hpp"
 #include "wardogs/terrain_package.hpp"
@@ -15,7 +17,6 @@
 #include "vehicle_solution_widget.hpp"
 
 #include <Windows.h>
-#include <dwmapi.h>
 #include <windowsx.h>
 #include <winrt/base.h>
 
@@ -26,6 +27,7 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QFrame>
+#include <QFontDatabase>
 #include <QGroupBox>
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -48,11 +50,14 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cmath>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
 #include <regex>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -62,10 +67,11 @@ namespace {
 
 QString qtext(const std::wstring& value) { return QString::fromStdWString(value); }
 QString error_text(const std::exception& error) { return QString::fromUtf8(error.what()); }
-
-void enable_dark_title_bar(HWND window) {
-    const BOOL enabled = TRUE;
-    DwmSetWindowAttribute(window, 20, &enabled, sizeof(enabled));
+std::string utf8(const QString& value) { return value.toUtf8().toStdString(); }
+std::string one_line_utf8(QString value) {
+    value.replace(QLatin1Char('\r'), QStringLiteral("\\r"));
+    value.replace(QLatin1Char('\n'), QStringLiteral("\\n"));
+    return utf8(value);
 }
 
 std::filesystem::path executable_directory() {
@@ -134,7 +140,120 @@ QIcon weapon_mode_icon(bool vehicle_mode) {
     return QIcon(image);
 }
 
+enum class UiGlyph { location, target, scan, refresh, clear, settings };
+
+QIcon ui_icon(UiGlyph glyph) {
+    QPixmap image(22, 22);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QColor color(QStringLiteral("#d7e1ee"));
+    painter.setPen(QPen(color, 1.7, Qt::SolidLine, Qt::RoundCap,
+                        Qt::RoundJoin));
+    painter.setBrush(Qt::NoBrush);
+
+    switch (glyph) {
+    case UiGlyph::location:
+        painter.drawEllipse(QRectF(6.0, 3.0, 10.0, 10.0));
+        painter.drawEllipse(QPointF(11.0, 8.0), 1.7, 1.7);
+        painter.drawLine(QPointF(7.4, 11.5), QPointF(11.0, 19.0));
+        painter.drawLine(QPointF(14.6, 11.5), QPointF(11.0, 19.0));
+        break;
+    case UiGlyph::target:
+        painter.drawEllipse(QPointF(11.0, 11.0), 6.0, 6.0);
+        painter.drawEllipse(QPointF(11.0, 11.0), 2.2, 2.2);
+        painter.drawLine(QPointF(11.0, 2.0), QPointF(11.0, 6.0));
+        painter.drawLine(QPointF(11.0, 16.0), QPointF(11.0, 20.0));
+        painter.drawLine(QPointF(2.0, 11.0), QPointF(6.0, 11.0));
+        painter.drawLine(QPointF(16.0, 11.0), QPointF(20.0, 11.0));
+        break;
+    case UiGlyph::scan:
+        painter.drawLine(QPointF(4.0, 8.0), QPointF(4.0, 4.0));
+        painter.drawLine(QPointF(4.0, 4.0), QPointF(8.0, 4.0));
+        painter.drawLine(QPointF(14.0, 4.0), QPointF(18.0, 4.0));
+        painter.drawLine(QPointF(18.0, 4.0), QPointF(18.0, 8.0));
+        painter.drawLine(QPointF(4.0, 14.0), QPointF(4.0, 18.0));
+        painter.drawLine(QPointF(4.0, 18.0), QPointF(8.0, 18.0));
+        painter.drawLine(QPointF(14.0, 18.0), QPointF(18.0, 18.0));
+        painter.drawLine(QPointF(18.0, 18.0), QPointF(18.0, 14.0));
+        painter.drawLine(QPointF(6.0, 11.0), QPointF(16.0, 11.0));
+        break;
+    case UiGlyph::refresh:
+        painter.drawArc(QRectF(4.0, 4.0, 14.0, 14.0), 35 * 16, 270 * 16);
+        painter.drawLine(QPointF(16.8, 4.8), QPointF(17.9, 9.1));
+        painter.drawLine(QPointF(16.8, 4.8), QPointF(12.6, 5.8));
+        break;
+    case UiGlyph::clear:
+        painter.drawRoundedRect(QRectF(6.0, 7.0, 10.0, 11.0), 1.5, 1.5);
+        painter.drawLine(QPointF(5.0, 6.0), QPointF(17.0, 6.0));
+        painter.drawLine(QPointF(8.5, 3.8), QPointF(13.5, 3.8));
+        painter.drawLine(QPointF(9.0, 10.0), QPointF(9.0, 15.0));
+        painter.drawLine(QPointF(13.0, 10.0), QPointF(13.0, 15.0));
+        break;
+    case UiGlyph::settings:
+        painter.drawEllipse(QPointF(11.0, 11.0), 3.0, 3.0);
+        painter.drawEllipse(QPointF(11.0, 11.0), 7.0, 7.0);
+        for (int index = 0; index < 8; ++index) {
+            constexpr double pi = 3.14159265358979323846;
+            const double angle = index * pi / 4.0;
+            painter.drawLine(QPointF(11.0 + std::cos(angle) * 7.0,
+                                     11.0 + std::sin(angle) * 7.0),
+                             QPointF(11.0 + std::cos(angle) * 9.0,
+                                     11.0 + std::sin(angle) * 9.0));
+        }
+        break;
+    }
+    return QIcon(image);
+}
+
 enum class OcrAction { base, target, calibration_impact };
+
+const char* action_name(OcrAction action) {
+    switch (action) {
+    case OcrAction::base: return "base";
+    case OcrAction::target: return "target";
+    case OcrAction::calibration_impact: return "calibration_impact";
+    }
+    return "unknown";
+}
+
+std::string foreground_summary() {
+    const HWND foreground = GetForegroundWindow();
+    DWORD process_id = 0;
+    if (foreground) GetWindowThreadProcessId(foreground, &process_id);
+    std::ostringstream summary;
+    summary << "foreground_pid=" << process_id
+            << " foreground_window=0x" << std::hex
+            << reinterpret_cast<std::uintptr_t>(foreground) << std::dec;
+    if (process_id) {
+        const HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
+                                           FALSE, process_id);
+        if (process) {
+            std::wstring path(32768, L'\0');
+            DWORD length = static_cast<DWORD>(path.size());
+            if (QueryFullProcessImageNameW(process, 0, path.data(), &length)) {
+                path.resize(length);
+                summary << " foreground_process="
+                        << one_line_utf8(qtext(
+                               std::filesystem::path(path).filename().wstring()));
+            }
+            CloseHandle(process);
+        }
+    }
+    return summary.str();
+}
+
+bool process_is_elevated() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return false;
+    TOKEN_ELEVATION elevation{};
+    DWORD size = 0;
+    const bool elevated = GetTokenInformation(token, TokenElevation, &elevation,
+                                               sizeof(elevation), &size) &&
+                          elevation.TokenIsElevated != 0;
+    CloseHandle(token);
+    return elevated;
+}
 
 struct OcrMessage {
     bool success{};
@@ -148,7 +267,15 @@ struct OcrMessage {
 class MainWindow final : public QMainWindow {
 public:
     MainWindow() {
-        try { settings_ = wardogs::load_settings(); } catch (...) { settings_ = {}; }
+        try {
+            settings_ = wardogs::load_settings();
+            wardogs::log_info("settings.loaded");
+        } catch (const std::exception& error) {
+            settings_ = {};
+            wardogs::log_warning("settings.load_failed error=" +
+                                 std::string(error.what()));
+        }
+        configure_frameless_window(this);
         bool saved_region_invalid = false;
         if (settings_.capture_region) {
             try {
@@ -174,11 +301,14 @@ public:
             set_status(QStringLiteral("就绪；已恢复保存的 OCR 区域"));
         else if (saved_region_invalid)
             set_status(QStringLiteral("已保存的 OCR 区域不可用，请重新设置"), true);
-        enable_dark_title_bar(reinterpret_cast<HWND>(winId()));
+        enable_rounded_window_corners(this);
         try { register_hotkeys(settings_); }
         catch (const std::exception& error) {
+            wardogs::log_error("hotkey.startup_failed error=" +
+                               std::string(error.what()));
             set_status(QStringLiteral("热键启动失败：") + error_text(error), true);
         }
+        wardogs::log_info("window.ready");
     }
 
     ~MainWindow() override {
@@ -191,6 +321,12 @@ protected:
         unregister_hotkeys();
         if (worker_.joinable()) worker_.join();
         event->accept();
+    }
+
+    bool nativeEvent(const QByteArray& event_type, void* message,
+                     qintptr* result) override {
+        if (handle_frameless_native_event(this, message, result)) return true;
+        return QMainWindow::nativeEvent(event_type, message, result);
     }
 
 private:
@@ -232,9 +368,14 @@ private:
         app_frame_ = new QFrame;
         app_frame_->setObjectName(QStringLiteral("appFrame"));
         app_frame_->setProperty("error", false);
-        auto* root = new QVBoxLayout(app_frame_);
-        root->setContentsMargins(20, 16, 20, 16);
-        root->setSpacing(10);
+        auto* outer = new QVBoxLayout(app_frame_);
+        outer->setContentsMargins(0, 0, 0, 0);
+        outer->setSpacing(0);
+        outer->addWidget(new WindowTitleBar(this));
+        auto* content = new QWidget;
+        auto* root = new QVBoxLayout(content);
+        root->setContentsMargins(22, 18, 22, 18);
+        root->setSpacing(12);
 
         auto* heading = new QHBoxLayout;
         auto* title = new QLabel(QStringLiteral("射表计算"));
@@ -255,14 +396,12 @@ private:
         heading->addWidget(mode_button_);
         heading->addWidget(pin_button_);
         root->addLayout(heading);
-        auto* subtitle = new QLabel(
-            QStringLiteral("OCR 热键和手动输入共用同一套计算逻辑"));
-        subtitle->setObjectName(QStringLiteral("muted"));
-        root->addWidget(subtitle);
         update_mode_button();
 
-        terrain_group_ = new QGroupBox(QStringLiteral("高度模型"));
+        terrain_group_ = new QGroupBox;
         auto* terrain_layout = new QVBoxLayout(terrain_group_);
+        terrain_layout->setContentsMargins(14, 14, 14, 14);
+        terrain_layout->setSpacing(8);
         terrain_selector_ = new QComboBox;
         terrain_selector_->addItem(QStringLiteral("等高假设（无需地图包）"));
         for (const auto& installed : terrain_discovery_.installed)
@@ -277,9 +416,10 @@ private:
         root->addWidget(terrain_group_);
         update_terrain_summary();
 
-        auto* coordinates = new QGroupBox(QStringLiteral("坐标"));
+        auto* coordinates = new QGroupBox;
         auto* coordinate_layout = new QVBoxLayout(coordinates);
-        coordinate_layout->setSpacing(7);
+        coordinate_layout->setContentsMargins(14, 14, 14, 14);
+        coordinate_layout->setSpacing(8);
         base_summary_ = new QLabel;
         target_summary_ = new QLabel;
         coordinate_layout->addWidget(base_summary_);
@@ -288,14 +428,18 @@ private:
         base_input_ = new QLineEdit;
         base_input_->setPlaceholderText(
             QStringLiteral("基准点：x12.34, y56.78 或 12.34 56.78"));
-        auto* manual_base = new QPushButton(QStringLiteral("手动设为基准点"));
+        auto* manual_base = new QPushButton(QStringLiteral("设为基准"));
+        manual_base->setIcon(ui_icon(UiGlyph::location));
+        manual_base->setProperty("quiet", true);
         base_row->addWidget(base_input_, 1);
         base_row->addWidget(manual_base);
         coordinate_layout->addLayout(base_row);
         auto* target_row = new QHBoxLayout;
         target_input_ = new QLineEdit;
         target_input_->setPlaceholderText(QStringLiteral("目标点：输入后立即计算"));
-        auto* manual_target = new QPushButton(QStringLiteral("手动计算目标点"));
+        auto* manual_target = new QPushButton(QStringLiteral("计算目标"));
+        manual_target->setIcon(ui_icon(UiGlyph::target));
+        manual_target->setProperty("quiet", true);
         target_row->addWidget(target_input_, 1);
         target_row->addWidget(manual_target);
         coordinate_layout->addLayout(target_row);
@@ -305,8 +449,10 @@ private:
         calibration_group_->hide();
         root->addWidget(calibration_group_);
 
-        mortar_result_group_ = new QGroupBox(QStringLiteral("计算结果"));
+        mortar_result_group_ = new QGroupBox;
         auto* result_layout = new QVBoxLayout(mortar_result_group_);
+        result_layout->setContentsMargins(14, 14, 14, 14);
+        result_layout->setSpacing(8);
         auto* cards = new QHBoxLayout;
         cards->setSpacing(12);
         cards->addWidget(result_card(QStringLiteral("射程"),
@@ -320,10 +466,12 @@ private:
         result_layout->addWidget(raw_result_);
         root->addWidget(mortar_result_group_);
 
-        vehicle_result_group_ = new QGroupBox(QStringLiteral("SPH-2 修正射表"));
+        vehicle_result_group_ = new QGroupBox;
         vehicle_result_group_->setObjectName(QStringLiteral("vehicleResultGroup"));
         vehicle_result_group_->setProperty("error", false);
         auto* vehicle_results = new QVBoxLayout(vehicle_result_group_);
+        vehicle_results->setContentsMargins(10, 10, 10, 10);
+        vehicle_results->setSpacing(7);
         low_solution_ = new VehicleSolutionWidget(wardogs::Arc::low);
         high_solution_ = new VehicleSolutionWidget(wardogs::Arc::high);
         vehicle_results->addWidget(low_solution_);
@@ -335,9 +483,10 @@ private:
         vehicle_result_group_->hide();
         root->addWidget(vehicle_result_group_);
 
-        auto* ocr = new QGroupBox(QStringLiteral("OCR 与热键"));
+        auto* ocr = new QGroupBox;
         auto* ocr_layout = new QVBoxLayout(ocr);
-        ocr_layout->setSpacing(7);
+        ocr_layout->setContentsMargins(14, 14, 14, 14);
+        ocr_layout->setSpacing(8);
         engine_summary_ = new QLabel;
         region_summary_ = new QLabel(QStringLiteral("OCR 区域：尚未设置"));
         ocr_layout->addWidget(engine_summary_);
@@ -348,10 +497,20 @@ private:
         base_button_ = new QPushButton;
         target_button_ = new QPushButton;
         quick_target_button_ = new QPushButton;
-        auto* settings_button = new QPushButton(QStringLiteral("设置"));
+        auto* settings_button = new QPushButton;
+        settings_button->setObjectName(QStringLiteral("iconButton"));
+        settings_button->setIcon(ui_icon(UiGlyph::settings));
+        settings_button->setIconSize(QSize(20, 20));
+        settings_button->setFixedWidth(38);
+        settings_button->setToolTip(QStringLiteral("偏好设置"));
+        settings_button->setAccessibleName(QStringLiteral("打开偏好设置"));
+        region_button_->setIcon(ui_icon(UiGlyph::scan));
+        base_button_->setIcon(ui_icon(UiGlyph::location));
+        target_button_->setIcon(ui_icon(UiGlyph::target));
+        quick_target_button_->setIcon(ui_icon(UiGlyph::target));
         for (auto* button : {region_button_, base_button_, target_button_,
                              quick_target_button_, settings_button})
-            actions->addWidget(button, 1);
+            actions->addWidget(button, button == settings_button ? 0 : 1);
         ocr_layout->addLayout(actions);
         ocr_text_ = new QLabel(QStringLiteral("OCR 原文：—"));
         ocr_text_->setObjectName(QStringLiteral("muted"));
@@ -363,6 +522,7 @@ private:
         status_->setObjectName(QStringLiteral("status"));
         status_->setWordWrap(true);
         root->addWidget(status_);
+        outer->addWidget(content);
         setCentralWidget(app_frame_);
 
         connect(manual_base, &QPushButton::clicked, this, &MainWindow::manual_base);
@@ -384,8 +544,11 @@ private:
     }
 
     QGroupBox* build_calibration_group() {
-        auto* group = new QGroupBox(QStringLiteral("当前炮位 · 两发校准"));
+        auto* group = new QGroupBox;
         auto* layout = new QGridLayout(group);
+        layout->setContentsMargins(14, 14, 14, 14);
+        layout->setHorizontalSpacing(8);
+        layout->setVerticalSpacing(7);
         layout->addWidget(new QLabel, 0, 0);
         layout->addWidget(new QLabel(QStringLiteral("计划瞄准点")), 0, 1);
         layout->addWidget(new QLabel(QStringLiteral("实际落点")), 0, 2);
@@ -408,10 +571,18 @@ private:
             layout->addWidget(impact, row, 2);
             layout->addWidget(arc, row, 3);
         }
-        calibration_ocr_ = new QPushButton(QStringLiteral("OCR 录入下一发"));
-        calibration_manual_ = new QPushButton(QStringLiteral("手动录入下一发"));
+        calibration_ocr_ = new QPushButton(QStringLiteral("OCR 下一发"));
+        calibration_ocr_->setIcon(ui_icon(UiGlyph::scan));
+        calibration_ocr_->setProperty("quiet", true);
+        calibration_manual_ = new QPushButton(QStringLiteral("手动下一发"));
+        calibration_manual_->setIcon(ui_icon(UiGlyph::location));
+        calibration_manual_->setProperty("quiet", true);
         auto* recalculate = new QPushButton(QStringLiteral("重新计算"));
+        recalculate->setIcon(ui_icon(UiGlyph::refresh));
+        recalculate->setProperty("quiet", true);
         auto* clear = new QPushButton(QStringLiteral("清除校准"));
+        clear->setIcon(ui_icon(UiGlyph::clear));
+        clear->setProperty("quiet", true);
         layout->addWidget(calibration_ocr_, 3, 0, 1, 2);
         layout->addWidget(calibration_manual_, 3, 2, 1, 2);
         layout->addWidget(recalculate, 4, 0, 1, 2);
@@ -681,6 +852,7 @@ private:
     }
 
     void set_status(const QString& text, bool error = false) {
+        if (error) wardogs::log_error("ui.error message=" + utf8(text));
         set_failure_state(error);
         status_->setProperty("error", error);
         status_->style()->unpolish(status_);
@@ -700,9 +872,18 @@ private:
     }
 
     void enter_pinned_mode() {
+        wardogs::log_info("window.enter_pinned_mode");
         if (!pinned_window_) {
             pinned_window_ = std::make_unique<PinnedResultWindow>(
-                [this] { exit_pinned_mode(); });
+                [this] { exit_pinned_mode(); }, settings_.pinned_card,
+                [this](PinnedResultWindow::Preferences preferences) {
+                    settings_.pinned_card = preferences;
+                    try {
+                        wardogs::save_settings(settings_);
+                    } catch (...) {
+                        // Display preferences remain active for this session.
+                    }
+                });
         }
         sync_pinned_result();
         pinned_window_->set_error(failure_state_);
@@ -715,6 +896,7 @@ private:
 
     void exit_pinned_mode() {
         if (!pinned_mode_) return;
+        wardogs::log_info("window.exit_pinned_mode");
         pinned_mode_ = false;
         if (pinned_window_) pinned_window_->hide();
         showNormal();
@@ -898,6 +1080,7 @@ private:
     }
 
     void begin_region_setup() {
+        wardogs::log_info("selection.region_requested " + foreground_summary());
         if (busy_) { set_status(QStringLiteral("OCR 正在执行，请稍候")); return; }
         hide_for_selection();
         const bool started = selector_.begin(
@@ -923,6 +1106,7 @@ private:
     }
 
     void begin_quick_target() {
+        wardogs::log_info("selection.quick_target_requested " + foreground_summary());
         if (busy_) { set_status(QStringLiteral("OCR 正在执行，请稍候")); return; }
         hide_for_selection();
         const bool started = selector_.begin(
@@ -947,6 +1131,9 @@ private:
     }
 
     void start_ocr(OcrAction action) {
+        wardogs::log_info(std::string("ocr.request action=") + action_name(action) +
+                          " saved_region=" + (region_ ? "1" : "0") + " " +
+                          foreground_summary());
         if (action == OcrAction::calibration_impact && !target_) {
             set_status(QStringLiteral("请先设置当前目标，再录入实际落点"), true);
             return;
@@ -956,11 +1143,30 @@ private:
     }
 
     void start_ocr(const wardogs::CaptureRegion& capture_region, OcrAction action) {
-        if (busy_.exchange(true)) { set_status(QStringLiteral("OCR 正在执行，请稍候")); return; }
+        if (busy_.exchange(true)) {
+            wardogs::log_warning(std::string("ocr.busy action=") + action_name(action));
+            set_status(QStringLiteral("OCR 正在执行，请稍候"));
+            return;
+        }
+        {
+            const auto& rect = capture_region.relative;
+            std::ostringstream diagnostic;
+            diagnostic << "capture.begin action=" << action_name(action)
+                       << " monitor=" << one_line_utf8(qtext(capture_region.monitor_device))
+                       << " rect=" << rect.left << ',' << rect.top << ','
+                       << rect.right << ',' << rect.bottom;
+            wardogs::log_info(diagnostic.str());
+        }
         wardogs::Image image;
-        try { image = wardogs::capture_screen(capture_region); }
+        try {
+            image = wardogs::capture_screen(capture_region);
+            wardogs::log_info("capture.success width=" +
+                              std::to_string(image.width) + " height=" +
+                              std::to_string(image.height));
+        }
         catch (const std::exception& error) {
             busy_ = false;
+            wardogs::log_error("capture.failed error=" + std::string(error.what()));
             set_status(QStringLiteral("截图失败：") + error_text(error), true);
             return;
         }
@@ -973,6 +1179,10 @@ private:
         QPointer<MainWindow> self(this);
         worker_ = std::jthread([this, self, image = std::move(image), backend,
                                 pattern, action](std::stop_token) mutable {
+            wardogs::log_info(std::string("ocr.worker_started action=") +
+                              action_name(action) + " backend=" +
+                              (backend == wardogs::OcrBackend::rapid ? "rapid"
+                                                                      : "windows"));
             OcrMessage message;
             message.action = action;
             try {
@@ -997,7 +1207,11 @@ private:
                     message.confidence = result.confidence;
                 }
                 message.success = true;
-            } catch (const std::exception& error) { message.error = error_text(error); }
+            } catch (const std::exception& error) {
+                message.error = error_text(error);
+                wardogs::log_error(std::string("ocr.worker_failed action=") +
+                                   action_name(action) + " error=" + error.what());
+            }
             if (self) QMetaObject::invokeMethod(self,
                 [self, message = std::move(message)]() mutable {
                     if (self) self->finish_ocr(std::move(message));
@@ -1008,10 +1222,23 @@ private:
     void finish_ocr(OcrMessage message) {
         busy_ = false;
         if (!message.success) {
+            wardogs::log_error(std::string("ocr.finished success=0 action=") +
+                               action_name(message.action) + " raw=" +
+                               one_line_utf8(qtext(message.text)) + " error=" +
+                               utf8(message.error));
             ocr_text_->setText(QStringLiteral("OCR 原文：") +
                 (message.text.empty() ? QStringLiteral("（空）") : qtext(message.text)));
             set_status(QStringLiteral("OCR 失败：") + message.error, true);
             return;
+        }
+        {
+            std::ostringstream diagnostic;
+            diagnostic << "ocr.finished success=1 action="
+                       << action_name(message.action) << " point="
+                       << message.point.x << ',' << message.point.y
+                       << " confidence=" << message.confidence << " raw="
+                       << one_line_utf8(qtext(message.text));
+            wardogs::log_info(diagnostic.str());
         }
         QString confidence;
         if (message.confidence > 0.0F)
@@ -1038,6 +1265,7 @@ private:
     }
 
     void edit_settings() {
+        wardogs::log_info("settings.dialog_opened");
         if (busy_) {
             set_status(QStringLiteral("OCR 正在执行，请稍候再修改设置"));
             return;
@@ -1060,6 +1288,7 @@ private:
             settings_ = candidate;
             rapid_.reset(); windows_.reset();
             update_engine_summary(); update_action_labels();
+            wardogs::log_info("settings.saved");
             set_status(QStringLiteral("设置已保存并立即生效"));
         } catch (const std::exception& error) {
             try { register_hotkeys(previous); } catch (...) {}
@@ -1077,8 +1306,26 @@ private:
                                 wardogs::parse_hotkey(settings.target_hotkey),
                                 wardogs::parse_hotkey(settings.quick_target_hotkey)};
         wardogs::validate_unique_hotkeys(values);
+        {
+            std::ostringstream diagnostic;
+            diagnostic << "hotkey.configure";
+            for (std::size_t index = 0; index < values.size(); ++index) {
+                diagnostic << " key" << index << '='
+                           << one_line_utf8(qtext(values[index].display))
+                           << "(vk=0x" << std::hex << std::uppercase
+                           << values[index].virtual_key << ",mod=0x"
+                           << values[index].modifiers << std::dec << ')';
+            }
+            wardogs::log_info(diagnostic.str());
+        }
         hotkey_listener_.start(values, [this](std::size_t index) {
             QMetaObject::invokeMethod(this, [this, index] {
+                wardogs::log_info("hotkey.handle index=" +
+                                  std::to_string(index) + " active_window=" +
+                                  (isActiveWindow() ? "1" : "0") +
+                                  " visible=" + (isVisible() ? "1" : "0") +
+                                  " pinned=" + (pinned_mode_ ? "1" : "0") +
+                                  " " + foreground_summary());
                 if (index == 0) begin_region_setup();
                 else if (index == 1) start_ocr(OcrAction::base);
                 else if (index == 2) start_ocr(OcrAction::target);
@@ -1089,26 +1336,52 @@ private:
 };
 
 constexpr auto style_sheet = R"(
-QWidget { color:#e5e7eb; font-family:"Microsoft YaHei UI"; font-size:13px; }
-QMainWindow,QDialog { background:#111827; }
-QFrame#appFrame { background:#111827; border:3px solid transparent; }
+QWidget { color:#dbe4ef; font-size:13px; }
+QMainWindow,QDialog { background:#0b1018; }
+QFrame#appFrame { background:#0b1018; border:3px solid transparent;
+                  border-radius:9px; }
 QFrame#appFrame[error="true"] { border-color:#ef4444; }
+QWidget#windowTitleBar { background:#101821; border:0; }
+QLabel#windowTitleText { color:#cbd5e1; font-size:12px; font-weight:500; }
+QToolButton[windowControl="true"] { background:transparent; border:0;
+    border-radius:7px; padding:0; }
+QToolButton[windowControl="true"]:hover { background:#1d2a3b; }
+QToolButton[windowControl="true"]:pressed { background:#263750; }
+QToolButton[closeControl="true"]:hover { background:#c42b1c; }
+QToolButton[closeControl="true"]:pressed { background:#a92317; }
 QFrame#pinnedFrame { background:#0f172a; border:3px solid transparent;
                      border-radius:10px; }
 QFrame#pinnedFrame[error="true"] { border-color:#ef4444; }
-QLabel#title,QLabel#dialogTitle { color:#f8fafc; font-size:26px; font-weight:700; }
-QLabel#dialogTitle { font-size:23px; }
-QLabel#muted { color:#94a3b8; }
-QLabel#status { color:#7dd3fc; padding:7px 2px; }
+QFrame#pinnedFrame QFrame#resultCard,
+QFrame#pinnedFrame QFrame#vehicleSolutionCard {
+    background:#0b1220; border:1px solid #334155; border-radius:8px;
+}
+QWidget#pinnedContextMenu { background:transparent; }
+QToolButton#pinnedLockButton { background:transparent; border:0;
+    border-radius:9px; padding:5px; }
+QToolButton#pinnedLockButton:hover { background:#1e293b; }
+QToolButton#pinnedLockButton:checked { background:#1e3e75; }
+QToolButton#pinnedLockButton:checked:hover { background:#254b8c; }
+QSlider#pinnedOpacitySlider::groove:horizontal { height:5px; background:#334155;
+    border-radius:2px; }
+QSlider#pinnedOpacitySlider::sub-page:horizontal { background:#38bdf8;
+    border-radius:2px; }
+QSlider#pinnedOpacitySlider::handle:horizontal { background:#e2e8f0;
+    border:1px solid #64748b; width:15px; margin:-6px 0; border-radius:7px; }
+QSlider#pinnedOpacitySlider::handle:horizontal:hover { background:#f8fafc;
+    border-color:#38bdf8; }
+QLabel#title,QLabel#dialogTitle { color:#f4f7fb; font-size:25px; font-weight:700; }
+QLabel#dialogTitle { font-size:22px; }
+QLabel#muted { color:#8190a3; }
+QLabel#status { color:#75c9e8; padding:6px 4px 2px 4px; }
 QLabel#status[error="true"] { color:#fca5a5; }
-QLabel#resultCaption { color:#94a3b8; font-size:13px; font-weight:600; }
-QLabel#rawResult { color:#64748b; font-size:12px; padding:3px; }
-QFrame#resultCard { background:#0b1220; border:1px solid #334155; border-radius:8px; }
-QFrame#vehicleSolutionCard { background:#0b1220; border:1px solid #334155;
-                             border-radius:8px; }
-QFrame#vehicleSolutionCard[unavailable="true"] { border-color:#64748b; }
-QLabel#solutionArc { color:#94a3b8; font-size:13px; font-weight:600; }
-QLabel#solutionMetricCaption { color:#64748b; font-size:11px; }
+QLabel#resultCaption { color:#8190a3; font-size:12px; font-weight:600; }
+QLabel#rawResult { color:#66768a; font-size:12px; padding:3px; }
+QFrame#resultCard { background:#0d1521; border:0; border-radius:10px; }
+QFrame#vehicleSolutionCard { background:#0d1521; border:0; border-radius:10px; }
+QFrame#vehicleSolutionCard[unavailable="true"] { background:#171b25; }
+QLabel#solutionArc { color:#8291a5; font-size:12px; font-weight:600; }
+QLabel#solutionMetricCaption { color:#66768a; font-size:11px; }
 QLabel#solutionDistance,QLabel#solutionBearing,QLabel#solutionMil {
     font-family:"Bahnschrift"; font-size:25px; font-weight:700; }
 QLabel#solutionDistance { color:#fbbf24; }
@@ -1116,37 +1389,40 @@ QLabel#solutionBearing { color:#67e8f9; }
 QLabel#solutionMil { color:#c4b5fd; }
 QLabel#solutionMil[unavailable="true"] { color:#fca5a5; font-size:19px; }
 QGroupBox#vehicleResultGroup[error="true"] { border:2px solid #ef4444; }
-QGroupBox { background:#0f172a; border:1px solid #334155; border-radius:8px;
-            margin-top:9px; padding-top:10px; font-weight:600; }
-QGroupBox::title { subcontrol-origin:margin; left:10px; padding:0 5px; color:#f1f5f9; }
-QLineEdit,QPlainTextEdit,QKeySequenceEdit,QComboBox { background:#0b1220;
-    border:1px solid #475569; border-radius:5px; padding:7px; color:#f8fafc;
+QGroupBox { background:#111925; border:0; border-radius:12px;
+            margin-top:0; padding-top:0; font-weight:500; }
+QLineEdit,QPlainTextEdit,QKeySequenceEdit,QComboBox { background:#0c1420;
+    border:1px solid transparent; border-radius:8px; padding:8px 9px; color:#f3f6fa;
     selection-background-color:#2563eb; }
-QLineEdit:focus,QPlainTextEdit:focus,QKeySequenceEdit:focus,QComboBox:focus { border-color:#3b82f6; }
+QLineEdit:focus,QPlainTextEdit:focus,QKeySequenceEdit:focus,QComboBox:focus {
+    border-color:#3569ae;
+}
 QComboBox::drop-down { border:0; width:28px; }
-QComboBox QAbstractItemView { background:#0f172a; border:1px solid #475569;
-    color:#f8fafc; selection-background-color:#1d4ed8; padding:4px; }
-QPushButton { background:#1e3a5f; border:1px solid #2563eb; border-radius:5px;
-              padding:7px 10px; min-height:18px; }
-QPushButton:hover { background:#1d4ed8; }
-QPushButton:pressed { background:#1e40af; }
-QPushButton[primary="true"] { background:#1d4ed8; }
-QPushButton[primary="true"]:hover { background:#2563eb; }
+QComboBox QAbstractItemView { background:#131d2b; border:0;
+    color:#f3f6fa; selection-background-color:#1e3e75; padding:5px; }
+QPushButton { background:#192638; border:0; border-radius:8px;
+              padding:8px 11px; min-height:18px; outline:0; }
+QPushButton:hover { background:#23344a; }
+QPushButton:pressed { background:#182f55; }
+QPushButton[quiet="true"] { background:#151f2e; color:#c8d3df; }
+QPushButton[quiet="true"]:hover { background:#202f43; color:#f2f6fb; }
+QPushButton[primary="true"] { background:#1e3e75; color:#f7f9fc; }
+QPushButton[primary="true"]:hover { background:#285297; }
 QPushButton#arcToggle { min-width:58px; padding-left:8px; padding-right:8px;
-    background:#0f172a; color:#cbd5e1; border-color:#475569; }
-QPushButton#arcToggle:hover { background:#1e3a5f; }
-QPushButton#arcToggle[highlighted="true"] { background:#1d4ed8; color:#f8fafc;
-    border-color:#60a5fa; font-weight:700; }
-QPushButton#arcToggle[highlighted="true"]:hover {
-    background:#2563eb; border-color:#93c5fd; }
-QPushButton#arcToggle[highlighted="true"]:pressed { background:#1e40af; }
-QPushButton#iconButton { background:#0f172a; border:1px solid #334155;
-                         border-radius:6px; padding:5px; min-height:0; }
-QPushButton#iconButton:hover { background:#1e3a5f; border-color:#3b82f6; }
-QPushButton#iconButton:pressed { background:#1e40af; }
-QPushButton:disabled { color:#94a3b8; background:#334155; border-color:#475569; }
-QScrollBar:vertical { background:#0b1220; width:10px; margin:0; }
-QScrollBar::handle:vertical { background:#475569; border-radius:4px; min-height:24px; }
+    background:#0c1420; color:#9aa8b8; }
+QPushButton#arcToggle:hover { background:#192638; color:#e6edf5; }
+QPushButton#arcToggle[highlighted="true"] { background:#1e3e75; color:#f8fafc;
+    font-weight:700; }
+QPushButton#arcToggle[highlighted="true"]:hover { background:#285297; }
+QPushButton#arcToggle[highlighted="true"]:pressed { background:#183563; }
+QPushButton#iconButton { background:transparent; border:0;
+                         border-radius:9px; padding:6px; min-height:0; }
+QPushButton#iconButton:hover { background:#192638; }
+QPushButton#iconButton:pressed { background:#1e3e75; }
+QPushButton:disabled { color:#667487; background:#141c28; }
+QToolTip { color:#eef3f8; background:#1a2636; border:0; padding:5px; }
+QScrollBar:vertical { background:transparent; width:9px; margin:0; }
+QScrollBar::handle:vertical { background:#334459; border-radius:4px; min-height:24px; }
 QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical { height:0; }
 )";
 
@@ -1159,9 +1435,40 @@ int run_application(int argc, char* argv[]) {
         Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
     QApplication app(argc, argv);
     QApplication::setApplicationVersion(QStringLiteral(WARDOGS_VERSION));
+    const auto preferred_log =
+        executable_directory() / L"WarDogsDistanceCalculator.log";
+    if (!wardogs::initialize_session_log(preferred_log, WARDOGS_VERSION)) {
+        try {
+            const auto fallback_log = std::filesystem::temp_directory_path() /
+                                      L"WarDogsDistanceCalculator.log";
+            wardogs::initialize_session_log(fallback_log, WARDOGS_VERSION);
+        } catch (...) {
+        }
+    }
+    wardogs::log_info("application.initialized log_path=" +
+                      one_line_utf8(qtext(wardogs::active_log_path().wstring())));
+    wardogs::log_info(std::string("application.privilege elevated=") +
+                      (process_is_elevated() ? "1" : "0"));
+    QObject::connect(&app, &QGuiApplication::applicationStateChanged,
+                     [](Qt::ApplicationState state) {
+        wardogs::log_info("application.state value=" +
+                          std::to_string(static_cast<int>(state)) + " " +
+                          foreground_summary());
+    });
     QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+    auto interface_font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
+    interface_font.setFamilies({QStringLiteral("Microsoft YaHei UI"),
+                                QStringLiteral("Microsoft YaHei"),
+                                QStringLiteral("Segoe UI"),
+                                interface_font.family()});
+    interface_font.setWeight(QFont::Medium);
+    app.setFont(interface_font);
     app.setStyleSheet(QString::fromUtf8(style_sheet));
     MainWindow window;
     window.show();
-    return app.exec();
+    const int exit_code = app.exec();
+    wardogs::log_info("application.event_loop_exit code=" +
+                      std::to_string(exit_code));
+    wardogs::shutdown_session_log();
+    return exit_code;
 }

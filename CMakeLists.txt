@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(WarDogsDistanceCalculator VERSION 1.2.0 LANGUAGES C CXX)
+project(WarDogsDistanceCalculator VERSION 1.3.0 LANGUAGES C CXX)
 set(CMAKE_CL_SHOWINCLUDES_PREFIX "注意: 包含文件:")
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets)
@@ -39,6 +39,7 @@ add_library(wardogs_core
     src/coordinates.cpp
     src/hotkeys.cpp
     src/image.cpp
+    src/logger.cpp
     src/ocr.cpp
     src/presentation.cpp
     src/vehicle_ballistics.cpp
@@ -69,6 +70,7 @@ if(WIN32)
         src/settings.cpp
         src/settings_dialog.cpp
         src/vehicle_solution_widget.cpp
+        src/window_title_bar.cpp
         src/windows_ocr.cpp
         "${CMAKE_CURRENT_BINARY_DIR}/version.rc"
     )
@@ -150,10 +152,14 @@ add_custom_command(TARGET wardogs_terrain_tests POST_BUILD
 
 add_executable(wardogs_vehicle_ui_tests
     tests/vehicle_ui_tests.cpp
+    src/pinned_result_window.cpp
     src/vehicle_solution_widget.cpp
+    src/window_title_bar.cpp
 )
 target_include_directories(wardogs_vehicle_ui_tests PRIVATE include src)
-target_link_libraries(wardogs_vehicle_ui_tests PRIVATE wardogs_core Qt6::Widgets)
+target_link_libraries(wardogs_vehicle_ui_tests PRIVATE
+    wardogs_core Qt6::Widgets dwmapi
+)
 if(MSVC)
     target_compile_options(wardogs_vehicle_ui_tests PRIVATE /W4 /permissive- /utf-8)
 endif()

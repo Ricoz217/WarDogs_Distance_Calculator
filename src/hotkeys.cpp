@@ -1,8 +1,11 @@
 #include "wardogs/hotkeys.hpp"
+#include "wardogs/logger.hpp"
 
 #include <algorithm>
 #include <cwctype>
+#include <iomanip>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -165,6 +168,7 @@ struct GlobalHotkeyListener::Impl {
     HHOOK hook{};
     std::optional<HotkeyMatcher> matcher;
     Callback callback;
+    std::vector<UINT> watched_virtual_keys;
 
     static bool key_down(int virtual_key) {
         return (GetAsyncKeyState(virtual_key) & 0x8000) != 0;
@@ -180,6 +184,19 @@ struct GlobalHotkeyListener::Impl {
         return modifiers;
     }
 
+    bool should_log_key(UINT virtual_key) const {
+        const bool function_key = virtual_key >= VK_F1 && virtual_key <= VK_F24;
+        const bool media_key =
+            (virtual_key >= VK_BROWSER_BACK && virtual_key <= VK_BROWSER_HOME) ||
+            (virtual_key >= VK_VOLUME_MUTE && virtual_key <= VK_MEDIA_PLAY_PAUSE) ||
+            virtual_key == VK_LAUNCH_MAIL ||
+            virtual_key == VK_LAUNCH_MEDIA_SELECT ||
+            virtual_key == VK_LAUNCH_APP1 || virtual_key == VK_LAUNCH_APP2;
+        return function_key || media_key ||
+               std::find(watched_virtual_keys.begin(), watched_virtual_keys.end(),
+                         virtual_key) != watched_virtual_keys.end();
+    }
+
     static LRESULT CALLBACK hook_proc(int code, WPARAM message, LPARAM data) noexcept {
         Impl* instance = active_instance;
         if (code == HC_ACTION && instance && instance->matcher) {
@@ -187,13 +204,30 @@ struct GlobalHotkeyListener::Impl {
             const bool pressed = message == WM_KEYDOWN || message == WM_SYSKEYDOWN;
             const bool released = message == WM_KEYUP || message == WM_SYSKEYUP;
             if (pressed || released) {
+                const UINT modifiers = active_modifiers(event);
                 const auto match = instance->matcher->handle_key_event(
-                    event.vkCode, pressed, active_modifiers(event));
+                    event.vkCode, pressed, modifiers);
+                if (instance->should_log_key(event.vkCode)) {
+                    std::ostringstream diagnostic;
+                    diagnostic << "keyboard." << (pressed ? "down" : "up")
+                               << " vk=0x" << std::hex << std::uppercase
+                               << event.vkCode << std::dec
+                               << " scan=" << event.scanCode
+                               << " modifiers=0x" << std::hex << modifiers
+                               << " flags=0x" << event.flags << std::dec
+                               << " injected="
+                               << (((event.flags & LLKHF_INJECTED) != 0) ? 1 : 0);
+                    if (match) diagnostic << " match=" << *match;
+                    log_debug(diagnostic.str());
+                }
                 if (match && instance->callback) {
                     try {
+                        log_info("hotkey.dispatch index=" +
+                                 std::to_string(*match));
                         instance->callback(*match);
                     } catch (...) {
-                        // Exceptions must never cross the Windows hook boundary.
+                        log_error("hotkey.callback_exception index=" +
+                                  std::to_string(*match));
                     }
                 }
             }
@@ -214,25 +248,36 @@ void GlobalHotkeyListener::start(std::span<const Hotkey> hotkeys, Callback callb
     }
     impl_->matcher.emplace(hotkeys);
     impl_->callback = std::move(callback);
+    impl_->watched_virtual_keys.clear();
+    for (const auto& hotkey : hotkeys)
+        impl_->watched_virtual_keys.push_back(hotkey.virtual_key);
     Impl::active_instance = impl_.get();
     impl_->hook = SetWindowsHookExW(WH_KEYBOARD_LL, &Impl::hook_proc,
                                     GetModuleHandleW(nullptr), 0);
     if (!impl_->hook) {
+        const DWORD error = GetLastError();
         Impl::active_instance = nullptr;
         impl_->matcher.reset();
         impl_->callback = {};
+        impl_->watched_virtual_keys.clear();
+        log_error("hotkey.hook_install_failed windows_error=" +
+                  std::to_string(error));
         throw std::runtime_error("无法启动共享全局热键监听");
     }
+    log_info("hotkey.hook_started count=" + std::to_string(hotkeys.size()));
 }
 
 void GlobalHotkeyListener::stop() noexcept {
     if (impl_->hook) {
-        UnhookWindowsHookEx(impl_->hook);
+        const bool stopped = UnhookWindowsHookEx(impl_->hook) != FALSE;
+        log_info(std::string("hotkey.hook_stopped success=") +
+                 (stopped ? "1" : "0"));
         impl_->hook = nullptr;
     }
     if (Impl::active_instance == impl_.get()) Impl::active_instance = nullptr;
     impl_->matcher.reset();
     impl_->callback = {};
+    impl_->watched_virtual_keys.clear();
 }
 
 bool GlobalHotkeyListener::active() const noexcept { return impl_->hook != nullptr; }
