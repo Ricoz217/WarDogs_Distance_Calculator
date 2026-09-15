@@ -160,14 +160,30 @@ void WindowTitleBar::update_maximize_icon() {
 }
 
 void configure_frameless_window(QWidget* window) {
-    window->setWindowFlag(Qt::FramelessWindowHint, true);
+    window->setWindowFlags(window->windowFlags() | Qt::FramelessWindowHint |
+                           Qt::WindowMinimizeButtonHint |
+                           Qt::WindowMaximizeButtonHint |
+                           Qt::WindowCloseButtonHint);
 }
 
 void enable_rounded_window_corners(QWidget* window) {
+    const auto handle = reinterpret_cast<HWND>(window->winId());
+    auto style = GetWindowLongPtrW(handle, GWL_STYLE);
+    style |= WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU;
+    style &= ~WS_CAPTION;
+    SetWindowLongPtrW(handle, GWL_STYLE, style);
+
     constexpr DWORD attribute = 33;  // DWMWA_WINDOW_CORNER_PREFERENCE
     constexpr DWORD round_preference = 2;  // DWMWCP_ROUND
-    DwmSetWindowAttribute(reinterpret_cast<HWND>(window->winId()), attribute,
-                          &round_preference, sizeof(round_preference));
+    DwmSetWindowAttribute(handle, attribute, &round_preference,
+                          sizeof(round_preference));
+    constexpr DWORD border_attribute = 34;  // DWMWA_BORDER_COLOR
+    constexpr COLORREF no_border = 0xFFFFFFFE;  // DWMWA_COLOR_NONE
+    DwmSetWindowAttribute(handle, border_attribute, &no_border,
+                          sizeof(no_border));
+    SetWindowPos(handle, nullptr, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE |
+                     SWP_FRAMECHANGED);
 }
 
 bool handle_frameless_native_event(QWidget* window, void* message,

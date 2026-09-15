@@ -507,6 +507,7 @@ private:
         }
         calibration_ocr_ = new QPushButton(QStringLiteral("OCR 下一发"));
         calibration_ocr_->setIcon(ui_icon(UiGlyph::scan));
+        calibration_ocr_->setProperty("quiet", true);
         calibration_manual_ = new QPushButton(QStringLiteral("手动下一发"));
         calibration_manual_->setIcon(ui_icon(UiGlyph::location));
         calibration_manual_->setProperty("quiet", true);
