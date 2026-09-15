@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(WarDogsDistanceCalculator VERSION 1.2.0 LANGUAGES C CXX)
+project(WarDogsDistanceCalculator VERSION 1.2.1 LANGUAGES C CXX)
 set(CMAKE_CL_SHOWINCLUDES_PREFIX "注意: 包含文件:")
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets)
@@ -39,6 +39,7 @@ add_library(wardogs_core
     src/coordinates.cpp
     src/hotkeys.cpp
     src/image.cpp
+    src/logger.cpp
     src/ocr.cpp
     src/presentation.cpp
     src/vehicle_ballistics.cpp
