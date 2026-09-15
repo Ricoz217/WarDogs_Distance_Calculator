@@ -18,6 +18,10 @@ public:
 
     [[nodiscard]] wardogs::AppSettings settings() const;
 
+protected:
+    bool nativeEvent(const QByteArray& event_type, void* message,
+                     qintptr* result) override;
+
 private:
     static QKeySequenceEdit* make_hotkey(const std::wstring& value,
                                          QHBoxLayout* layout,

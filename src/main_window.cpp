@@ -1,6 +1,7 @@
 #include "main_window.hpp"
 #include "selection_overlay.hpp"
 #include "settings_dialog.hpp"
+#include "window_title_bar.hpp"
 
 #include "wardogs/capture.hpp"
 #include "wardogs/core.hpp"
@@ -15,7 +16,6 @@
 #include "vehicle_solution_widget.hpp"
 
 #include <Windows.h>
-#include <dwmapi.h>
 #include <windowsx.h>
 #include <winrt/base.h>
 
@@ -64,11 +64,6 @@ namespace {
 
 QString qtext(const std::wstring& value) { return QString::fromStdWString(value); }
 QString error_text(const std::exception& error) { return QString::fromUtf8(error.what()); }
-
-void enable_dark_title_bar(HWND window) {
-    const BOOL enabled = TRUE;
-    DwmSetWindowAttribute(window, 20, &enabled, sizeof(enabled));
-}
 
 std::filesystem::path executable_directory() {
     std::wstring buffer(32768, L'\0');
@@ -217,6 +212,7 @@ class MainWindow final : public QMainWindow {
 public:
     MainWindow() {
         try { settings_ = wardogs::load_settings(); } catch (...) { settings_ = {}; }
+        configure_frameless_window(this);
         bool saved_region_invalid = false;
         if (settings_.capture_region) {
             try {
@@ -242,7 +238,7 @@ public:
             set_status(QStringLiteral("就绪；已恢复保存的 OCR 区域"));
         else if (saved_region_invalid)
             set_status(QStringLiteral("已保存的 OCR 区域不可用，请重新设置"), true);
-        enable_dark_title_bar(reinterpret_cast<HWND>(winId()));
+        enable_rounded_window_corners(this);
         try { register_hotkeys(settings_); }
         catch (const std::exception& error) {
             set_status(QStringLiteral("热键启动失败：") + error_text(error), true);
@@ -259,6 +255,12 @@ protected:
         unregister_hotkeys();
         if (worker_.joinable()) worker_.join();
         event->accept();
+    }
+
+    bool nativeEvent(const QByteArray& event_type, void* message,
+                     qintptr* result) override {
+        if (handle_frameless_native_event(this, message, result)) return true;
+        return QMainWindow::nativeEvent(event_type, message, result);
     }
 
 private:
@@ -300,7 +302,12 @@ private:
         app_frame_ = new QFrame;
         app_frame_->setObjectName(QStringLiteral("appFrame"));
         app_frame_->setProperty("error", false);
-        auto* root = new QVBoxLayout(app_frame_);
+        auto* outer = new QVBoxLayout(app_frame_);
+        outer->setContentsMargins(0, 0, 0, 0);
+        outer->setSpacing(0);
+        outer->addWidget(new WindowTitleBar(this));
+        auto* content = new QWidget;
+        auto* root = new QVBoxLayout(content);
         root->setContentsMargins(22, 18, 22, 18);
         root->setSpacing(12);
 
@@ -434,7 +441,6 @@ private:
         region_button_->setIcon(ui_icon(UiGlyph::scan));
         base_button_->setIcon(ui_icon(UiGlyph::location));
         target_button_->setIcon(ui_icon(UiGlyph::target));
-        target_button_->setProperty("primary", true);
         quick_target_button_->setIcon(ui_icon(UiGlyph::target));
         for (auto* button : {region_button_, base_button_, target_button_,
                              quick_target_button_, settings_button})
@@ -450,6 +456,7 @@ private:
         status_->setObjectName(QStringLiteral("status"));
         status_->setWordWrap(true);
         root->addWidget(status_);
+        outer->addWidget(content);
         setCentralWidget(app_frame_);
 
         connect(manual_base, &QPushButton::clicked, this, &MainWindow::manual_base);
@@ -500,7 +507,6 @@ private:
         }
         calibration_ocr_ = new QPushButton(QStringLiteral("OCR 下一发"));
         calibration_ocr_->setIcon(ui_icon(UiGlyph::scan));
-        calibration_ocr_->setProperty("primary", true);
         calibration_manual_ = new QPushButton(QStringLiteral("手动下一发"));
         calibration_manual_->setIcon(ui_icon(UiGlyph::location));
         calibration_manual_->setProperty("quiet", true);
@@ -1197,8 +1203,17 @@ private:
 constexpr auto style_sheet = R"(
 QWidget { color:#dbe4ef; font-size:13px; }
 QMainWindow,QDialog { background:#0b1018; }
-QFrame#appFrame { background:#0b1018; border:3px solid transparent; }
+QFrame#appFrame { background:#0b1018; border:3px solid transparent;
+                  border-radius:9px; }
 QFrame#appFrame[error="true"] { border-color:#ef4444; }
+QWidget#windowTitleBar { background:#101821; border:0; }
+QLabel#windowTitleText { color:#cbd5e1; font-size:12px; font-weight:500; }
+QToolButton[windowControl="true"] { background:transparent; border:0;
+    border-radius:7px; padding:0; }
+QToolButton[windowControl="true"]:hover { background:#1d2a3b; }
+QToolButton[windowControl="true"]:pressed { background:#263750; }
+QToolButton[closeControl="true"]:hover { background:#c42b1c; }
+QToolButton[closeControl="true"]:pressed { background:#a92317; }
 QFrame#pinnedFrame { background:#0f172a; border:3px solid transparent;
                      border-radius:10px; }
 QFrame#pinnedFrame[error="true"] { border-color:#ef4444; }

@@ -1,5 +1,6 @@
 #include "pinned_result_window.hpp"
 #include "vehicle_solution_widget.hpp"
+#include "window_title_bar.hpp"
 
 #include <QApplication>
 #include <QContextMenuEvent>
@@ -29,6 +30,25 @@ void check(bool condition, const char* message) {
 int main(int argc, char* argv[]) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
+
+    QWidget host;
+    host.setWindowTitle(QStringLiteral("测试窗口"));
+    configure_frameless_window(&host);
+    WindowTitleBar title_bar(&host);
+    check(host.windowFlags().testFlag(Qt::FramelessWindowHint),
+          "custom title bar removes the native Windows caption");
+    const auto* title_text =
+        title_bar.findChild<QLabel*>(QStringLiteral("windowTitleText"));
+    const auto caption_buttons = title_bar.findChildren<QToolButton*>();
+    check(title_text && title_text->text() == QStringLiteral("测试窗口"),
+          "custom title bar follows the host window title");
+    check(caption_buttons.size() == 3,
+          "custom title bar provides minimize, maximize, and close controls");
+    for (const auto* button : caption_buttons) {
+        check(button->text().isEmpty() && !button->icon().isNull() &&
+                  !button->accessibleName().isEmpty(),
+              "caption controls are icon-only and remain accessible");
+    }
 
     VehicleSolutionWidget full(wardogs::Arc::low);
     full.set_unavailable(QStringLiteral("3100 m"), QStringLiteral("203.0° SW"));
