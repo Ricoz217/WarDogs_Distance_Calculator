@@ -27,6 +27,11 @@ struct CorrectedSolution {
     double mil{};
 };
 
+struct FiringAngles {
+    double bearing_deg{};
+    double mil{};
+};
+
 struct PlatformCalibration {
     Matrix3 rotation{};
     double pair_angle_residual_deg{};
@@ -51,6 +56,9 @@ inline constexpr double maximum_calibration_separation_deg = 150.0;
 [[nodiscard]] PlatformCalibration calibrate_platform(
     Point base, const CalibrationShot& first, const CalibrationShot& second,
     const HeightLookup& height_lookup = {});
+[[nodiscard]] FiringAngles required_firing_angles(
+    Point base, Point point, const PlatformCalibration& calibration, Arc arc,
+    double height_delta_m = 0.0);
 [[nodiscard]] CorrectedSolution corrected_solution(
     Point base, Point target, const PlatformCalibration& calibration, Arc arc,
     double height_delta_m = 0.0);

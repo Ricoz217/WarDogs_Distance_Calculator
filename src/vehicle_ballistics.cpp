@@ -301,10 +301,10 @@ PlatformCalibration calibrate_platform(Point base, const CalibrationShot& first,
                 std::numbers::pi};
 }
 
-CorrectedSolution corrected_solution(Point base, Point target,
-                                     const PlatformCalibration& calibration,
-                                     Arc arc, double height_delta_m) {
-    const auto geometry = shot_geometry(base, target, "目标点不能与炮位重合");
+FiringAngles required_firing_angles(Point base, Point point,
+                                    const PlatformCalibration& calibration,
+                                    Arc arc, double height_delta_m) {
+    const auto geometry = shot_geometry(base, point, "落点不能与炮位重合");
     const double desired_mil = sph2_mil_for_trajectory(
         geometry.first, height_delta_m, arc, true);
     const auto desired_world =
@@ -315,7 +315,16 @@ CorrectedSolution corrected_solution(Point base, Point target,
     if (bearing < 0.0) bearing += 360.0;
     const double mil =
         std::atan2(corrected[2], std::hypot(corrected[0], corrected[1])) * 1000.0;
-    return {arc, bearing, sph2_distance_for_mil(mil, arc), mil};
+    return {bearing, mil};
+}
+
+CorrectedSolution corrected_solution(Point base, Point target,
+                                     const PlatformCalibration& calibration,
+                                     Arc arc, double height_delta_m) {
+    const auto firing = required_firing_angles(
+        base, target, calibration, arc, height_delta_m);
+    return {arc, firing.bearing_deg,
+            sph2_distance_for_mil(firing.mil, arc), firing.mil};
 }
 
 }  // namespace wardogs

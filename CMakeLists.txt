@@ -36,6 +36,7 @@ endif()
 
 add_library(wardogs_core
     src/calculator.cpp
+    src/continuous_calibration.cpp
     src/coordinates.cpp
     src/hotkeys.cpp
     src/image.cpp
@@ -137,6 +138,15 @@ if(MSVC)
     target_compile_options(wardogs_vehicle_ballistics_tests PRIVATE /W4 /permissive- /utf-8)
 endif()
 add_test(NAME wardogs_vehicle_ballistics_tests COMMAND wardogs_vehicle_ballistics_tests)
+
+add_executable(wardogs_continuous_calibration_tests
+    tests/continuous_calibration_tests.cpp)
+target_link_libraries(wardogs_continuous_calibration_tests PRIVATE wardogs_core)
+if(MSVC)
+    target_compile_options(wardogs_continuous_calibration_tests PRIVATE /W4 /permissive- /utf-8)
+endif()
+add_test(NAME wardogs_continuous_calibration_tests
+    COMMAND wardogs_continuous_calibration_tests)
 
 add_executable(wardogs_terrain_tests tests/terrain_package_tests.cpp)
 target_link_libraries(wardogs_terrain_tests PRIVATE wardogs_terrain Qt6::Core)

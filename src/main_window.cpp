@@ -6,6 +6,7 @@
 #include "windows_taskbar.hpp"
 
 #include "wardogs/capture.hpp"
+#include "wardogs/continuous_calibration.hpp"
 #include "wardogs/core.hpp"
 #include "wardogs/hotkeys.hpp"
 #include "wardogs/logger.hpp"
@@ -44,6 +45,8 @@
 #include <QPlainTextEdit>
 #include <QPointer>
 #include <QPushButton>
+#include <QScreen>
+#include <QScrollArea>
 #include <QStringList>
 #include <QStyleFactory>
 #include <QTimer>
@@ -208,13 +211,14 @@ QIcon ui_icon(UiGlyph glyph) {
     return QIcon(image);
 }
 
-enum class OcrAction { base, target, calibration_impact };
+enum class OcrAction { base, target, calibration_impact, continuous_impact };
 
 const char* action_name(OcrAction action) {
     switch (action) {
     case OcrAction::base: return "base";
     case OcrAction::target: return "target";
     case OcrAction::calibration_impact: return "calibration_impact";
+    case OcrAction::continuous_impact: return "continuous_impact";
     }
     return "unknown";
 }
@@ -289,7 +293,7 @@ public:
                 try { wardogs::save_settings(settings_); } catch (...) {}
             }
         }
-        setWindowTitle(QStringLiteral("War Dogs 射表计算"));
+        setWindowTitle(QStringLiteral("War Dogs 射表计算 · 持续校准实验"));
         resize(620, 610);
         setMinimumWidth(560);
         terrain_discovery_ = wardogs::discover_terrain_maps(
@@ -354,6 +358,8 @@ private:
     std::unique_ptr<wardogs::TerrainPackage> terrain_;
     std::optional<wardogs::InstalledTerrainMap> terrain_map_;
     std::optional<wardogs::PlatformCalibration> platform_calibration_;
+    std::optional<wardogs::ContinuousCalibration> continuous_calibration_;
+    std::optional<wardogs::FiringSnapshot> pending_firing_;
     std::optional<wardogs::CaptureRegion> region_;
     std::unique_ptr<wardogs::RapidOcr> rapid_;
     std::unique_ptr<wardogs::WindowsOcr> windows_;
@@ -370,16 +376,20 @@ private:
     QFrame* app_frame_{};
     QLabel *base_summary_{}, *target_summary_{}, *distance_{}, *bearing_{};
     QLabel *raw_result_{}, *engine_summary_{}, *region_summary_{}, *ocr_text_{}, *status_{};
-    QLabel *terrain_summary_{}, *calibration_summary_{}, *vehicle_note_{};
+    QLabel *terrain_summary_{}, *calibration_summary_{}, *vehicle_note_{},
+        *continuous_summary_{};
     QLineEdit *base_input_{}, *target_input_{};
     QLineEdit *first_aim_{}, *first_impact_{}, *second_aim_{}, *second_impact_{};
+    QLineEdit *firing_bearing_{}, *firing_mil_{}, *continuous_impact_{};
     QPushButton *region_button_{}, *base_button_{}, *target_button_{},
         *quick_target_button_{};
     QPushButton *mode_button_{}, *pin_button_{}, *first_arc_{}, *second_arc_{},
-        *calibration_ocr_{}, *calibration_manual_{};
-    QComboBox* terrain_selector_{};
+        *calibration_ocr_{}, *calibration_manual_{}, *freeze_firing_{},
+        *continuous_manual_{}, *continuous_ocr_{}, *clear_continuous_{},
+        *cancel_firing_{};
+    QComboBox *terrain_selector_{}, *firing_arc_{};
     QGroupBox *terrain_group_{}, *calibration_group_{}, *mortar_result_group_{},
-        *vehicle_result_group_{};
+        *vehicle_result_group_{}, *continuous_group_{};
     VehicleSolutionWidget *low_solution_{}, *high_solution_{};
 
     void build_ui() {
@@ -467,6 +477,9 @@ private:
         calibration_group_->hide();
         root->addWidget(calibration_group_);
 
+        continuous_group_ = build_continuous_group();
+        continuous_group_->hide();
+
         mortar_result_group_ = new QGroupBox;
         auto* result_layout = new QVBoxLayout(mortar_result_group_);
         result_layout->setContentsMargins(14, 14, 14, 14);
@@ -500,6 +513,7 @@ private:
         vehicle_results->addWidget(vehicle_note_);
         vehicle_result_group_->hide();
         root->addWidget(vehicle_result_group_);
+        root->addWidget(continuous_group_);
 
         auto* ocr = new QGroupBox;
         auto* ocr_layout = new QVBoxLayout(ocr);
@@ -540,7 +554,13 @@ private:
         status_->setObjectName(QStringLiteral("status"));
         status_->setWordWrap(true);
         root->addWidget(status_);
-        outer->addWidget(content);
+        auto* scroll = new QScrollArea;
+        scroll->setObjectName(QStringLiteral("mainContentScroll"));
+        scroll->setFrameShape(QFrame::NoFrame);
+        scroll->setWidgetResizable(true);
+        scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        scroll->setWidget(content);
+        outer->addWidget(scroll);
         setCentralWidget(app_frame_);
 
         connect(manual_base, &QPushButton::clicked, this, &MainWindow::manual_base);
@@ -620,6 +640,80 @@ private:
         return group;
     }
 
+    QGroupBox* build_continuous_group() {
+        auto* group = new QGroupBox;
+        group->setObjectName(QStringLiteral("continuousCalibrationGroup"));
+        auto* layout = new QGridLayout(group);
+        layout->setContentsMargins(14, 14, 14, 14);
+        layout->setHorizontalSpacing(8);
+        layout->setVerticalSpacing(7);
+
+        firing_arc_ = new QComboBox;
+        firing_arc_->setObjectName(QStringLiteral("continuousArc"));
+        firing_arc_->addItem(QStringLiteral("低射"));
+        firing_arc_->addItem(QStringLiteral("高抛"));
+        freeze_firing_ = new QPushButton(QStringLiteral("记录当前射击"));
+        freeze_firing_->setObjectName(QStringLiteral("freezeFiring"));
+        freeze_firing_->setToolTip(
+            QStringLiteral("冻结当前目标和射表结果；实际射击设置可在下方修改"));
+        cancel_firing_ = new QPushButton(QStringLiteral("取消本发"));
+        cancel_firing_->setProperty("quiet", true);
+        layout->addWidget(firing_arc_, 0, 0);
+        layout->addWidget(freeze_firing_, 0, 1);
+        layout->addWidget(cancel_firing_, 0, 2);
+
+        firing_bearing_ = new QLineEdit;
+        firing_bearing_->setObjectName(QStringLiteral("firingBearing"));
+        firing_bearing_->setPlaceholderText(QStringLiteral("实际方位角 °"));
+        firing_bearing_->setToolTip(
+            QStringLiteral("默认填入冻结时的显示值；若手动改过，请填写实际射击方位"));
+        firing_mil_ = new QLineEdit;
+        firing_mil_->setObjectName(QStringLiteral("firingMil"));
+        firing_mil_->setPlaceholderText(QStringLiteral("实际分划 mil"));
+        firing_mil_->setToolTip(
+            QStringLiteral("默认填入冻结时的显示值；若手动改过，请填写实际分划"));
+        layout->addWidget(firing_bearing_, 1, 0, 1, 2);
+        layout->addWidget(firing_mil_, 1, 2);
+
+        continuous_impact_ = new QLineEdit;
+        continuous_impact_->setObjectName(QStringLiteral("continuousImpact"));
+        continuous_impact_->setPlaceholderText(QStringLiteral("实际落点：x12.34, y56.78"));
+        continuous_manual_ = new QPushButton(QStringLiteral("录入落点"));
+        continuous_manual_->setObjectName(QStringLiteral("recordContinuousImpact"));
+        continuous_ocr_ = new QPushButton(QStringLiteral("OCR 落点"));
+        continuous_ocr_->setObjectName(QStringLiteral("ocrContinuousImpact"));
+        layout->addWidget(continuous_impact_, 2, 0);
+        layout->addWidget(continuous_manual_, 2, 1);
+        layout->addWidget(continuous_ocr_, 2, 2);
+
+        clear_continuous_ = new QPushButton(QStringLiteral("清除持续补偿"));
+        clear_continuous_->setObjectName(QStringLiteral("clearContinuousCalibration"));
+        clear_continuous_->setProperty("quiet", true);
+        continuous_summary_ = new QLabel(
+            QStringLiteral("完成两发校准后，可记录射击并持续修正"));
+        continuous_summary_->setObjectName(QStringLiteral("muted"));
+        continuous_summary_->setWordWrap(true);
+        continuous_summary_->setToolTip(
+            QStringLiteral("一致性是实验评分，不是命中概率；孤立的大偏差会暂时降低影响"));
+        layout->addWidget(clear_continuous_, 3, 0);
+        layout->addWidget(continuous_summary_, 3, 1, 1, 2);
+
+        group->setEnabled(false);
+        connect(freeze_firing_, &QPushButton::clicked, this,
+                &MainWindow::freeze_current_firing);
+        connect(cancel_firing_, &QPushButton::clicked, this,
+                &MainWindow::cancel_current_firing);
+        connect(continuous_manual_, &QPushButton::clicked, this,
+                &MainWindow::record_manual_continuous_impact);
+        connect(continuous_impact_, &QLineEdit::returnPressed, this,
+                &MainWindow::record_manual_continuous_impact);
+        connect(continuous_ocr_, &QPushButton::clicked, this,
+                [this] { start_ocr(OcrAction::continuous_impact); });
+        connect(clear_continuous_, &QPushButton::clicked, this,
+                &MainWindow::clear_continuous_calibration);
+        return group;
+    }
+
     QPushButton* make_arc_button() {
         auto* button = new QPushButton;
         button->setObjectName(QStringLiteral("arcToggle"));
@@ -665,6 +759,7 @@ private:
         update_mode_button();
         terrain_group_->setVisible(vehicle_mode_);
         calibration_group_->setVisible(vehicle_mode_);
+        continuous_group_->setVisible(vehicle_mode_);
         vehicle_result_group_->setVisible(vehicle_mode_);
         mortar_result_group_->setVisible(!vehicle_mode_);
         if (target_) {
@@ -688,7 +783,10 @@ private:
         app_frame_->adjustSize();
         adjustSize();
         const auto hint = sizeHint();
-        resize(std::max(vehicle_mode_ ? 720 : 620, hint.width()), hint.height());
+        const int available_height = screen()
+            ? screen()->availableGeometry().height() - 48 : hint.height();
+        resize(std::max(vehicle_mode_ ? 720 : 620, hint.width()),
+               std::min(hint.height(), available_height));
     }
 
     void update_terrain_summary(std::optional<double> height_delta = std::nullopt) {
@@ -741,6 +839,8 @@ private:
                 terrain_selector_->blockSignals(true);
                 terrain_selector_->setCurrentIndex(0);
                 terrain_selector_->blockSignals(false);
+                invalidate_platform_calibration();
+                if (target_) show_result(*target_);
                 update_terrain_summary();
                 set_status(QStringLiteral("地图高度包加载失败：") +
                                error_text(error), true);
@@ -768,6 +868,127 @@ private:
         return platform_calibration_.has_value() || !first_aim_->text().isEmpty() ||
                !first_impact_->text().isEmpty() || !second_aim_->text().isEmpty() ||
                !second_impact_->text().isEmpty();
+    }
+
+    void reset_continuous_calibration() {
+        continuous_calibration_.reset();
+        pending_firing_.reset();
+        firing_bearing_->clear();
+        firing_mil_->clear();
+        continuous_impact_->clear();
+        if (platform_calibration_)
+            continuous_calibration_.emplace(base_, *platform_calibration_);
+        continuous_group_->setEnabled(continuous_calibration_.has_value());
+        continuous_summary_->setText(continuous_calibration_
+            ? QStringLiteral("0 发持续观测 · 先记录当前射击")
+            : QStringLiteral("完成两发校准后，可记录射击并持续修正"));
+    }
+
+    void cancel_current_firing() {
+        if (!pending_firing_) return;
+        pending_firing_.reset();
+        firing_bearing_->clear();
+        firing_mil_->clear();
+        continuous_impact_->clear();
+        continuous_summary_->setText(
+            QStringLiteral("本发已取消 · 历史持续补偿保持不变"));
+        set_status(QStringLiteral("已取消未录入落点的射击记录"));
+    }
+
+    void freeze_current_firing() {
+        if (pending_firing_) {
+            set_status(QStringLiteral("请先录入本发落点或取消本发"), true);
+            return;
+        }
+        if (!continuous_calibration_ || !target_) {
+            set_status(QStringLiteral("请先完成两发校准并设置目标"), true);
+            return;
+        }
+        try {
+            const auto arc = firing_arc_->currentIndex() == 0
+                ? wardogs::Arc::low : wardogs::Arc::high;
+            const double height_delta = target_height_delta(*target_);
+            const auto solution = continuous_calibration_->solution(
+                *target_, arc, height_delta);
+            pending_firing_ = wardogs::FiringSnapshot{
+                *target_, arc, solution.bearing_deg, solution.mil, height_delta};
+            firing_bearing_->setText(QString::number(solution.bearing_deg, 'f', 3));
+            firing_mil_->setText(QString::number(solution.mil, 'f', 2));
+            continuous_impact_->clear();
+            const auto arc_name = arc == wardogs::Arc::low
+                ? QStringLiteral("低射") : QStringLiteral("高抛");
+            continuous_summary_->setText(
+                QStringLiteral("已记录%1目标 %2 · 射后录入落点")
+                    .arg(arc_name, qtext(wardogs::format_point(*target_))));
+            set_status(QStringLiteral("本发目标和显示设定已冻结；若实际设定不同，请先修改方位和分划"));
+        } catch (const std::exception& error) {
+            set_status(QStringLiteral("无法记录当前射击：") + error_text(error), true);
+        }
+    }
+
+    void record_manual_continuous_impact() {
+        try {
+            record_continuous_impact(
+                wardogs::parse_manual_coordinate(
+                    continuous_impact_->text().toStdWString()),
+                QStringLiteral("手动"));
+        } catch (const std::exception& error) {
+            set_status(QStringLiteral("实际落点输入失败：") + error_text(error), true);
+        }
+    }
+
+    void record_continuous_impact(wardogs::Point impact, const QString& source) {
+        if (!continuous_calibration_ || !pending_firing_) {
+            set_status(QStringLiteral("请先记录当前射击，再录入实际落点"), true);
+            return;
+        }
+        try {
+            bool bearing_valid = false;
+            bool mil_valid = false;
+            auto firing = *pending_firing_;
+            firing.bearing_deg = firing_bearing_->text().toDouble(&bearing_valid);
+            firing.mil = firing_mil_->text().toDouble(&mil_valid);
+            if (!bearing_valid || !mil_valid)
+                throw std::invalid_argument("请检查实际方位角和分划");
+            const auto assessment = continuous_calibration_->add_landing(
+                firing, impact, target_height_delta(impact));
+            pending_firing_.reset();
+            firing_bearing_->clear();
+            firing_mil_->clear();
+            continuous_impact_->clear();
+            continuous_summary_->setText(
+                QStringLiteral("持续观测 %1 发 · 本发相对一致性 %2（实验评分）")
+                    .arg(assessment.observation_count)
+                    .arg(assessment.confidence, 0, 'f', 2));
+            std::ostringstream diagnostic;
+            diagnostic << "continuous.impact_recorded source=" << utf8(source)
+                       << " count=" << assessment.observation_count
+                       << " arc=" << (firing.arc == wardogs::Arc::low ? "low" : "high")
+                       << " target=" << firing.target.x << ',' << firing.target.y
+                       << " impact=" << impact.x << ',' << impact.y
+                       << " bearing=" << firing.bearing_deg
+                       << " mil=" << firing.mil
+                       << " consistency=" << assessment.confidence;
+            wardogs::log_info(diagnostic.str());
+            if (target_) show_result(*target_);
+            set_status(QStringLiteral("已记录实际落点；持续补偿已更新"));
+        } catch (const std::exception& error) {
+            set_status(QStringLiteral("持续校准未更新：") + error_text(error), true);
+        }
+    }
+
+    void clear_continuous_calibration() {
+        if (!continuous_calibration_) return;
+        continuous_calibration_->clear();
+        pending_firing_.reset();
+        firing_bearing_->clear();
+        firing_mil_->clear();
+        continuous_impact_->clear();
+        continuous_summary_->setText(
+            QStringLiteral("已清除持续补偿 · 保留最初两发校准"));
+        wardogs::log_info("continuous.cleared");
+        if (target_) show_result(*target_);
+        set_status(QStringLiteral("持续补偿已清除；已回到两发基础模型"));
     }
 
     void record_manual_calibration() {
@@ -829,11 +1050,13 @@ private:
                 base_, first, second, lookup);
         } catch (const std::exception& error) {
             platform_calibration_.reset();
+            reset_continuous_calibration();
             calibration_summary_->setText(QStringLiteral("校准失败"));
             set_status(QStringLiteral("校准失败：") + error_text(error), true);
             return false;
         }
         next_calibration_shot_ = 3;
+        reset_continuous_calibration();
         calibration_ocr_->setEnabled(false);
         calibration_manual_->setEnabled(false);
         calibration_summary_->setText(
@@ -846,6 +1069,7 @@ private:
 
     void clear_vehicle_calibration() {
         platform_calibration_.reset();
+        reset_continuous_calibration();
         next_calibration_shot_ = 1;
         for (auto* editor : {first_aim_, first_impact_, second_aim_, second_impact_})
             editor->clear();
@@ -860,6 +1084,7 @@ private:
     void invalidate_platform_calibration() {
         if (!has_calibration_data()) return;
         platform_calibration_.reset();
+        reset_continuous_calibration();
         next_calibration_shot_ = 1;
         for (auto* editor : {first_aim_, first_impact_, second_aim_, second_impact_})
             editor->clear();
@@ -1046,8 +1271,12 @@ private:
                  std::tuple{wardogs::Arc::low, QStringLiteral("低射"), low_solution_},
                  std::tuple{wardogs::Arc::high, QStringLiteral("高抛"), high_solution_}}) {
             try {
-                card->set_solution(wardogs::corrected_solution(
-                    result.base, result.target, calibration, arc, height_delta));
+                card->set_solution(continuous_calibration_
+                    ? continuous_calibration_->solution(
+                          result.target, arc, height_delta)
+                    : wardogs::corrected_solution(
+                          result.base, result.target, calibration, arc,
+                          height_delta));
                 ++available;
             } catch (const std::exception& error) {
                 card->set_unavailable(raw_distance, raw_bearing);
@@ -1077,11 +1306,15 @@ private:
                       .arg(height_delta, 0, 'f', 1)
                 : QStringLiteral("未校准 · 当前显示平地参考射表"));
         } else {
-            vehicle_note_->setText(terrain_map_
-                ? QStringLiteral("已应用两发校准和 %1 高差 %2 m")
-                      .arg(qtext(terrain_map_->spec.display_name))
-                      .arg(height_delta, 0, 'f', 1)
-                : QStringLiteral("已应用当前炮位两发校准补偿"));
+            const auto online_count = continuous_calibration_
+                ? continuous_calibration_->sample_count() : 0;
+            vehicle_note_->setText(online_count > 0
+                ? QStringLiteral("两发校准 + %1 发持续修正").arg(online_count)
+                : terrain_map_
+                    ? QStringLiteral("已应用两发校准和 %1 高差 %2 m")
+                          .arg(qtext(terrain_map_->spec.display_name))
+                          .arg(height_delta, 0, 'f', 1)
+                    : QStringLiteral("已应用当前炮位两发校准补偿"));
         }
         return false;
     }
@@ -1181,6 +1414,10 @@ private:
                           foreground_summary());
         if (action == OcrAction::calibration_impact && !target_) {
             set_status(QStringLiteral("请先设置当前目标，再录入实际落点"), true);
+            return;
+        }
+        if (action == OcrAction::continuous_impact && !pending_firing_) {
+            set_status(QStringLiteral("请先记录当前射击，再 OCR 录入落点"), true);
             return;
         }
         if (!region_) { begin_region_setup(); return; }
@@ -1293,6 +1530,11 @@ private:
             record_calibration_impact(message.point, QStringLiteral("OCR"));
             return;
         }
+        if (message.action == OcrAction::continuous_impact) {
+            continuous_impact_->setText(qtext(wardogs::format_point(message.point)));
+            record_continuous_impact(message.point, QStringLiteral("OCR"));
+            return;
+        }
         if (message.action == OcrAction::base) {
             base_ = message.point;
             target_.reset();
@@ -1396,6 +1638,7 @@ private:
 constexpr auto style_sheet = R"(
 QWidget { color:#dbe4ef; font-size:13px; }
 QMainWindow,QDialog { background:#0b1018; }
+QScrollArea#mainContentScroll { background:#0b1018; border:0; }
 QFrame#appFrame { background:#0b1018; border:3px solid transparent;
                   border-radius:9px; }
 QFrame#appFrame[error="true"] { border-color:#ef4444; }
