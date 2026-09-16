@@ -296,9 +296,11 @@ public:
         setWindowTitle(QStringLiteral("War Dogs 射表计算 · 持续校准实验"));
         resize(620, 610);
         setMinimumWidth(560);
+        setMinimumHeight(610);
         terrain_discovery_ = wardogs::discover_terrain_maps(
             wardogs::default_terrain_directory());
         build_ui();
+        update_continuous_controls();
         update_coordinates();
         update_engine_summary();
         update_action_labels();
@@ -401,6 +403,7 @@ private:
         outer->setSpacing(0);
         outer->addWidget(new WindowTitleBar(this));
         auto* content = new QWidget;
+        content->setObjectName(QStringLiteral("mainContent"));
         auto* root = new QVBoxLayout(content);
         root->setContentsMargins(22, 18, 22, 18);
         root->setSpacing(12);
@@ -559,6 +562,7 @@ private:
         scroll->setFrameShape(QFrame::NoFrame);
         scroll->setWidgetResizable(true);
         scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        scroll->viewport()->setObjectName(QStringLiteral("mainContentViewport"));
         scroll->setWidget(content);
         outer->addWidget(scroll);
         setCentralWidget(app_frame_);
@@ -698,7 +702,6 @@ private:
         layout->addWidget(clear_continuous_, 3, 0);
         layout->addWidget(continuous_summary_, 3, 1, 1, 2);
 
-        group->setEnabled(false);
         connect(freeze_firing_, &QPushButton::clicked, this,
                 &MainWindow::freeze_current_firing);
         connect(cancel_firing_, &QPushButton::clicked, this,
@@ -785,8 +788,16 @@ private:
         const auto hint = sizeHint();
         const int available_height = screen()
             ? screen()->availableGeometry().height() - 48 : hint.height();
+        const auto* content = findChild<QWidget*>(QStringLiteral("mainContent"));
+        const auto* title_bar = findChild<QWidget*>(QStringLiteral("windowTitleBar"));
+        const int natural_height = content && title_bar
+            ? content->sizeHint().height() + title_bar->sizeHint().height() + 6
+            : hint.height();
+        const int target_height = std::max(
+            610, std::min(natural_height, available_height));
+        setMinimumHeight(target_height);
         resize(std::max(vehicle_mode_ ? 720 : 620, hint.width()),
-               std::min(hint.height(), available_height));
+               target_height);
     }
 
     void update_terrain_summary(std::optional<double> height_delta = std::nullopt) {
@@ -870,6 +881,13 @@ private:
                !second_impact_->text().isEmpty();
     }
 
+    void update_continuous_controls() {
+        const bool pending = pending_firing_.has_value();
+        firing_bearing_->setEnabled(pending);
+        firing_mil_->setEnabled(pending);
+        continuous_impact_->setEnabled(pending);
+    }
+
     void reset_continuous_calibration() {
         continuous_calibration_.reset();
         pending_firing_.reset();
@@ -878,15 +896,19 @@ private:
         continuous_impact_->clear();
         if (platform_calibration_)
             continuous_calibration_.emplace(base_, *platform_calibration_);
-        continuous_group_->setEnabled(continuous_calibration_.has_value());
+        update_continuous_controls();
         continuous_summary_->setText(continuous_calibration_
             ? QStringLiteral("0 发持续观测 · 先记录当前射击")
             : QStringLiteral("完成两发校准后，可记录射击并持续修正"));
     }
 
     void cancel_current_firing() {
-        if (!pending_firing_) return;
+        if (!pending_firing_) {
+            set_status(QStringLiteral("当前没有待录入的射击"));
+            return;
+        }
         pending_firing_.reset();
+        update_continuous_controls();
         firing_bearing_->clear();
         firing_mil_->clear();
         continuous_impact_->clear();
@@ -897,11 +919,11 @@ private:
 
     void freeze_current_firing() {
         if (pending_firing_) {
-            set_status(QStringLiteral("请先录入本发落点或取消本发"), true);
+            set_status(QStringLiteral("请先录入本发落点或取消本发"));
             return;
         }
         if (!continuous_calibration_ || !target_) {
-            set_status(QStringLiteral("请先完成两发校准并设置目标"), true);
+            set_status(QStringLiteral("请先完成两发校准并设置目标"));
             return;
         }
         try {
@@ -912,6 +934,7 @@ private:
                 *target_, arc, height_delta);
             pending_firing_ = wardogs::FiringSnapshot{
                 *target_, arc, solution.bearing_deg, solution.mil, height_delta};
+            update_continuous_controls();
             firing_bearing_->setText(QString::number(solution.bearing_deg, 'f', 3));
             firing_mil_->setText(QString::number(solution.mil, 'f', 2));
             continuous_impact_->clear();
@@ -927,6 +950,10 @@ private:
     }
 
     void record_manual_continuous_impact() {
+        if (!pending_firing_) {
+            set_status(QStringLiteral("请先完成两发校准，再记录当前射击"));
+            return;
+        }
         try {
             record_continuous_impact(
                 wardogs::parse_manual_coordinate(
@@ -953,6 +980,7 @@ private:
             const auto assessment = continuous_calibration_->add_landing(
                 firing, impact, target_height_delta(impact));
             pending_firing_.reset();
+            update_continuous_controls();
             firing_bearing_->clear();
             firing_mil_->clear();
             continuous_impact_->clear();
@@ -978,9 +1006,13 @@ private:
     }
 
     void clear_continuous_calibration() {
-        if (!continuous_calibration_) return;
+        if (!continuous_calibration_) {
+            set_status(QStringLiteral("请先完成两发基础校准"));
+            return;
+        }
         continuous_calibration_->clear();
         pending_firing_.reset();
+        update_continuous_controls();
         firing_bearing_->clear();
         firing_mil_->clear();
         continuous_impact_->clear();
@@ -1417,7 +1449,7 @@ private:
             return;
         }
         if (action == OcrAction::continuous_impact && !pending_firing_) {
-            set_status(QStringLiteral("请先记录当前射击，再 OCR 录入落点"), true);
+            set_status(QStringLiteral("请先记录当前射击，再 OCR 录入落点"));
             return;
         }
         if (!region_) { begin_region_setup(); return; }
@@ -1639,6 +1671,7 @@ constexpr auto style_sheet = R"(
 QWidget { color:#dbe4ef; font-size:13px; }
 QMainWindow,QDialog { background:#0b1018; }
 QScrollArea#mainContentScroll { background:#0b1018; border:0; }
+QWidget#mainContent,QWidget#mainContentViewport { background:#0b1018; }
 QFrame#appFrame { background:#0b1018; border:3px solid transparent;
                   border-radius:9px; }
 QFrame#appFrame[error="true"] { border-color:#ef4444; }
