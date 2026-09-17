@@ -10,6 +10,7 @@ class QComboBox;
 class QHBoxLayout;
 class QKeySequenceEdit;
 class QPlainTextEdit;
+class QSpinBox;
 
 class SettingsDialog final : public QDialog {
 public:
@@ -35,6 +36,9 @@ private:
     QKeySequenceEdit* target_key_{};
     QKeySequenceEdit* quick_target_key_{};
     QPlainTextEdit* pattern_{};
+    QSpinBox* crosshair_gap_{};
+    QSpinBox* crosshair_thickness_{};
+    QSpinBox* crosshair_length_{};
     std::optional<wardogs::CaptureRegion> capture_region_;
     wardogs::PinnedCardPreferences pinned_card_;
 };

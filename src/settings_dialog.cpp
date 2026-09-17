@@ -14,6 +14,7 @@
 #include <QMessageBox>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QSpinBox>
 #include <QVBoxLayout>
 
 #include <array>
@@ -82,6 +83,35 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
     form->addRow(QStringLiteral("坐标正则\n捕获组 x / y"), pattern_);
     root->addWidget(panel, 1);
 
+    auto* crosshair_panel = new QGroupBox(QStringLiteral("外置准星"));
+    auto* crosshair_form = new QFormLayout(crosshair_panel);
+    crosshair_form->setContentsMargins(14, 14, 14, 14);
+    crosshair_form->setHorizontalSpacing(16);
+    crosshair_form->setVerticalSpacing(12);
+
+    crosshair_gap_ = new QSpinBox;
+    crosshair_gap_->setObjectName(QStringLiteral("crosshairSpinBox"));
+    crosshair_gap_->setRange(10, 500);
+    crosshair_gap_->setValue(settings.crosshair_gap);
+    crosshair_gap_->setSuffix(QStringLiteral(" px"));
+    crosshair_form->addRow(QStringLiteral("横线间距"), crosshair_gap_);
+
+    crosshair_thickness_ = new QSpinBox;
+    crosshair_thickness_->setObjectName(QStringLiteral("crosshairSpinBox"));
+    crosshair_thickness_->setRange(1, 20);
+    crosshair_thickness_->setValue(settings.crosshair_thickness);
+    crosshair_thickness_->setSuffix(QStringLiteral(" px"));
+    crosshair_form->addRow(QStringLiteral("横线粗细"), crosshair_thickness_);
+
+    crosshair_length_ = new QSpinBox;
+    crosshair_length_->setObjectName(QStringLiteral("crosshairSpinBox"));
+    crosshair_length_->setRange(10, 300);
+    crosshair_length_->setValue(settings.crosshair_length);
+    crosshair_length_->setSuffix(QStringLiteral(" px"));
+    crosshair_form->addRow(QStringLiteral("横线长度"), crosshair_length_);
+
+    root->addWidget(crosshair_panel);
+
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save |
                                           QDialogButtonBox::Cancel);
     buttons->button(QDialogButtonBox::Save)->setText(QStringLiteral("保存设置"));
@@ -120,6 +150,9 @@ wardogs::AppSettings SettingsDialog::settings() const {
     value.coordinate_pattern = pattern_->toPlainText().trimmed().toStdWString();
     value.capture_region = capture_region_;
     value.pinned_card = pinned_card_;
+    value.crosshair_gap = crosshair_gap_->value();
+    value.crosshair_thickness = crosshair_thickness_->value();
+    value.crosshair_length = crosshair_length_->value();
     return value;
 }
 

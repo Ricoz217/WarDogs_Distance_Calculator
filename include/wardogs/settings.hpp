@@ -21,6 +21,10 @@ struct AppSettings {
     std::wstring coordinate_pattern{default_ocr_coordinate_pattern};
     std::optional<CaptureRegion> capture_region;
     PinnedCardPreferences pinned_card;
+    int crosshair_gap{100};
+    int crosshair_thickness{3};
+    int crosshair_length{60};
+    bool crosshair_visible{false};
 };
 
 std::filesystem::path settings_path();

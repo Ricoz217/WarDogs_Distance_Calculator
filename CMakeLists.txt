@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(WarDogsDistanceCalculator VERSION 1.3.1 LANGUAGES C CXX)
+project(WarDogsDistanceCalculator VERSION 1.4.0 LANGUAGES C CXX)
 set(CMAKE_CL_SHOWINCLUDES_PREFIX "注意: 包含文件:")
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets)
@@ -65,7 +65,9 @@ if(WIN32)
         src/app_icon.cpp
         src/app.cpp
         src/capture.cpp
+        src/crosshair_overlay.cpp
         src/main_window.cpp
+        src/mortar_reticle_widget.cpp
         src/pinned_result_window.cpp
         src/selection_overlay.cpp
         src/settings.cpp
@@ -156,6 +158,7 @@ add_custom_command(TARGET wardogs_terrain_tests POST_BUILD
 add_executable(wardogs_vehicle_ui_tests
     tests/vehicle_ui_tests.cpp
     src/app_icon.cpp
+    src/mortar_reticle_widget.cpp
     src/pinned_result_window.cpp
     src/vehicle_solution_widget.cpp
     src/window_title_bar.cpp

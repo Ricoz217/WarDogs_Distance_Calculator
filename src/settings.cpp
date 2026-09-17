@@ -96,6 +96,11 @@ AppSettings load_settings_from(const std::filesystem::path& path) {
             monitor, {static_cast<LONG>(*left), static_cast<LONG>(*top),
                       static_cast<LONG>(*right), static_cast<LONG>(*bottom)}};
     }
+    if (const auto v = read_integer(path, L"crosshair_gap")) settings.crosshair_gap = *v;
+    if (const auto v = read_integer(path, L"crosshair_thickness")) settings.crosshair_thickness = *v;
+    if (const auto v = read_integer(path, L"crosshair_length")) settings.crosshair_length = *v;
+    const auto vis = read_value(path, L"crosshair_visible", L"false");
+    settings.crosshair_visible = (vis == L"true" || vis == L"1");
     return settings;
 }
 
@@ -131,6 +136,10 @@ void save_settings_to(const std::filesystem::path& path,
             remove_value(path, key);
         }
     }
+    write_value(path, L"crosshair_gap", std::to_wstring(settings.crosshair_gap));
+    write_value(path, L"crosshair_thickness", std::to_wstring(settings.crosshair_thickness));
+    write_value(path, L"crosshair_length", std::to_wstring(settings.crosshair_length));
+    write_value(path, L"crosshair_visible", settings.crosshair_visible ? L"true" : L"false");
 }
 
 AppSettings load_settings() { return load_settings_from(settings_path()); }

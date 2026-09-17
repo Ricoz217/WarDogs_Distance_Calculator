@@ -22,6 +22,7 @@ class QShowEvent;
 class QSlider;
 class QToolButton;
 class VehicleSolutionWidget;
+class MortarReticleWidget;
 
 class PinnedResultWindow final : public QWidget {
 public:
@@ -37,6 +38,9 @@ public:
 
     void set_mode(bool vehicle_mode);
     void set_values(const QString& distance, const QString& bearing);
+    void set_mortar_reticle(double distance_m);
+    void set_mortar_reticle_out_of_range(const QString& message);
+    void clear_mortar_reticle();
     void set_vehicle_values(const VehicleSolutionWidget& low,
                             const VehicleSolutionWidget& high);
     void set_error(bool error);
@@ -86,6 +90,7 @@ private:
     QWidget *mortar_panel_{}, *vehicle_panel_{};
     QLabel *distance_{}, *bearing_{};
     VehicleSolutionWidget *low_{}, *high_{};
+    MortarReticleWidget* pinned_reticle_{};
     bool vehicle_mode_{};
     bool dragging_{};
     QPoint drag_offset_{};

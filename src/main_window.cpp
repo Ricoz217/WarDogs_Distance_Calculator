@@ -17,6 +17,8 @@
 
 #include "pinned_result_window.hpp"
 #include "vehicle_solution_widget.hpp"
+#include "mortar_reticle_widget.hpp"
+#include "crosshair_overlay.hpp"
 
 #include <Windows.h>
 #include <windowsx.h>
@@ -295,6 +297,7 @@ public:
         terrain_discovery_ = wardogs::discover_terrain_maps(
             wardogs::default_terrain_directory());
         build_ui();
+        init_crosshair();
         update_coordinates();
         update_engine_summary();
         update_action_labels();
@@ -375,12 +378,14 @@ private:
     QLineEdit *first_aim_{}, *first_impact_{}, *second_aim_{}, *second_impact_{};
     QPushButton *region_button_{}, *base_button_{}, *target_button_{},
         *quick_target_button_{};
-    QPushButton *mode_button_{}, *pin_button_{}, *first_arc_{}, *second_arc_{},
+    QPushButton *mode_button_{}, *pin_button_{}, *crosshair_button_{}, *first_arc_{}, *second_arc_{},
         *calibration_ocr_{}, *calibration_manual_{};
     QComboBox* terrain_selector_{};
     QGroupBox *terrain_group_{}, *calibration_group_{}, *mortar_result_group_{},
         *vehicle_result_group_{};
     VehicleSolutionWidget *low_solution_{}, *high_solution_{};
+    MortarReticleWidget* reticle_widget_{};
+    std::unique_ptr<CrosshairOverlay> crosshair_;
 
     void build_ui() {
         app_frame_ = new QFrame;
@@ -409,10 +414,16 @@ private:
         pin_button_->setFixedSize(38, 34);
         pin_button_->setToolTip(QStringLiteral("置顶显示射表结果"));
         pin_button_->setAccessibleName(QStringLiteral("进入置顶模式"));
+        crosshair_button_ = new QPushButton(QStringLiteral("+"));
+        crosshair_button_->setObjectName(QStringLiteral("iconButton"));
+        crosshair_button_->setFixedSize(38, 34);
+        crosshair_button_->setToolTip(QStringLiteral("显示/隐藏外置准星"));
+        crosshair_button_->setAccessibleName(QStringLiteral("显示/隐藏外置准星"));
         heading->addWidget(title);
         heading->addStretch();
         heading->addWidget(mode_button_);
         heading->addWidget(pin_button_);
+        heading->addWidget(crosshair_button_);
         root->addLayout(heading);
         update_mode_button();
 
@@ -482,6 +493,9 @@ private:
         raw_result_->setObjectName(QStringLiteral("rawResult"));
         raw_result_->setAlignment(Qt::AlignCenter);
         result_layout->addWidget(raw_result_);
+        reticle_widget_ = new MortarReticleWidget;
+        reticle_widget_->setObjectName(QStringLiteral("mortarReticle"));
+        result_layout->addWidget(reticle_widget_);
         root->addWidget(mortar_result_group_);
 
         vehicle_result_group_ = new QGroupBox;
@@ -549,6 +563,7 @@ private:
         connect(target_input_, &QLineEdit::returnPressed, this, &MainWindow::manual_target);
         connect(mode_button_, &QPushButton::clicked, this, &MainWindow::toggle_mode);
         connect(pin_button_, &QPushButton::clicked, this, &MainWindow::enter_pinned_mode);
+        connect(crosshair_button_, &QPushButton::clicked, this, &MainWindow::toggle_crosshair);
         connect(terrain_selector_, qOverload<int>(&QComboBox::currentIndexChanged),
                 this, [this](int) { on_terrain_changed(); });
         connect(region_button_, &QPushButton::clicked, this, &MainWindow::begin_region_setup);
@@ -1007,6 +1022,7 @@ private:
         high_solution_->set_waiting();
         set_vehicle_result_error(false);
         vehicle_note_->setText(text);
+        reticle_widget_->clear();
         update_terrain_summary();
         sync_pinned_result();
     }
@@ -1017,6 +1033,15 @@ private:
         distance_->setText(qtext(wardogs::format_distance_meters(result.distance)));
         bearing_->setText(qtext(wardogs::format_bearing(result.angle)));
         raw_result_->setText(qtext(wardogs::format_raw_distance(result.distance)));
+        const double distance_m = result.distance * 100.0;
+        if (distance_m < 110.0) {
+            reticle_widget_->set_out_of_range(QStringLiteral("距离过近"));
+        } else if (distance_m > 710.0) {
+            reticle_widget_->set_out_of_range(
+                QStringLiteral("超出迫击炮射程，若目前使用攀枝花请切换为两发校准模式"));
+        } else {
+            reticle_widget_->set_solution(distance_m);
+        }
         sync_pinned_result();
         return false;
     }
@@ -1096,10 +1121,25 @@ private:
     void sync_pinned_result() {
         if (!pinned_window_) return;
         pinned_window_->set_mode(vehicle_mode_);
-        if (vehicle_mode_)
+        if (vehicle_mode_) {
             pinned_window_->set_vehicle_values(*low_solution_, *high_solution_);
-        else
+        } else {
             pinned_window_->set_values(distance_->text(), bearing_->text());
+            if (target_) {
+                const auto result = wardogs::calculate_shot(base_, *target_);
+                const double distance_m = result.distance * 100.0;
+                if (distance_m < 110.0) {
+                    pinned_window_->set_mortar_reticle_out_of_range(QStringLiteral("距离过近"));
+                } else if (distance_m > 710.0) {
+                    pinned_window_->set_mortar_reticle_out_of_range(
+                        QStringLiteral("超出迫击炮射程，若目前使用攀枝花请切换为两发校准模式"));
+                } else {
+                    pinned_window_->set_mortar_reticle(distance_m);
+                }
+            } else {
+                pinned_window_->clear_mortar_reticle();
+            }
+        }
     }
 
     void manual_base() {
@@ -1333,6 +1373,9 @@ private:
             settings_ = candidate;
             rapid_.reset(); windows_.reset();
             update_engine_summary(); update_action_labels();
+            update_crosshair_settings(candidate.crosshair_gap,
+                                      candidate.crosshair_thickness,
+                                      candidate.crosshair_length);
             wardogs::log_info("settings.saved");
             set_status(QStringLiteral("设置已保存并立即生效"));
         } catch (const std::exception& error) {
@@ -1390,6 +1433,37 @@ private:
                 else if (index == 4) unlock_pinned_window("hotkey");
             }, Qt::QueuedConnection);
         });
+    }
+
+    void init_crosshair() {
+        crosshair_ = std::make_unique<CrosshairOverlay>();
+        crosshair_->set_gap(settings_.crosshair_gap);
+        crosshair_->set_thickness(settings_.crosshair_thickness);
+        crosshair_->set_length(settings_.crosshair_length);
+        if (settings_.crosshair_visible) crosshair_->show();
+    }
+
+    void toggle_crosshair() {
+        if (!crosshair_) return;
+        if (crosshair_->isVisible()) {
+            crosshair_->hide();
+            settings_.crosshair_visible = false;
+        } else {
+            crosshair_->show();
+            settings_.crosshair_visible = true;
+        }
+        try { wardogs::save_settings(settings_); } catch (...) {}
+    }
+
+    void update_crosshair_settings(int gap, int thickness, int length) {
+        if (!crosshair_) return;
+        crosshair_->set_gap(gap);
+        crosshair_->set_thickness(thickness);
+        crosshair_->set_length(length);
+        settings_.crosshair_gap = gap;
+        settings_.crosshair_thickness = thickness;
+        settings_.crosshair_length = length;
+        try { wardogs::save_settings(settings_); } catch (...) {}
     }
 };
 
@@ -1453,6 +1527,10 @@ QLabel#solutionMil[unavailable="true"] { color:#fca5a5; font-size:19px; }
 QGroupBox#vehicleResultGroup[error="true"] { border:2px solid #ef4444; }
 QGroupBox { background:#111925; border:0; border-radius:12px;
             margin-top:0; padding-top:0; font-weight:500; }
+QSpinBox#crosshairSpinBox { background:#e8edf5; border:1px solid #94a3b8;
+    border-radius:8px; padding:8px 9px; color:#000000;
+    selection-background-color:#2563eb; }
+QSpinBox#crosshairSpinBox:focus { border-color:#3569ae; }
 QLineEdit,QPlainTextEdit,QKeySequenceEdit,QComboBox { background:#0c1420;
     border:1px solid transparent; border-radius:8px; padding:8px 9px; color:#f3f6fa;
     selection-background-color:#2563eb; }

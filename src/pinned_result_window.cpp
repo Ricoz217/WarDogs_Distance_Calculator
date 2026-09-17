@@ -1,6 +1,7 @@
 #include "pinned_result_window.hpp"
 
 #include "app_icon.hpp"
+#include "mortar_reticle_widget.hpp"
 #include "vehicle_solution_widget.hpp"
 #include "wardogs/hotkeys.hpp"
 
@@ -41,8 +42,8 @@ namespace {
 
 constexpr int resize_margin = 8;
 
-QSize minimum_size(bool vehicle) { return vehicle ? QSize{350, 96} : QSize{320, 62}; }
-QSize default_size(bool vehicle) { return vehicle ? QSize{420, 116} : QSize{430, 78}; }
+QSize minimum_size(bool vehicle) { return vehicle ? QSize{350, 96} : QSize{320, 360}; }
+QSize default_size(bool vehicle) { return vehicle ? QSize{420, 116} : QSize{430, 380}; }
 
 class JumpSlider final : public QSlider {
 public:
@@ -215,11 +216,17 @@ PinnedResultWindow::PinnedResultWindow(
     layout->setSpacing(6);
 
     mortar_panel_ = new QWidget;
-    auto* mortar_layout = new QHBoxLayout(mortar_panel_);
+    auto* mortar_layout = new QVBoxLayout(mortar_panel_);
     mortar_layout->setContentsMargins(0, 0, 0, 0);
-    mortar_layout->setSpacing(8);
-    mortar_layout->addWidget(result_card(QStringLiteral("#fbbf24"), distance_), 1);
-    mortar_layout->addWidget(result_card(QStringLiteral("#67e8f9"), bearing_), 1);
+    mortar_layout->setSpacing(6);
+    auto* cards_row = new QHBoxLayout;
+    cards_row->setSpacing(8);
+    cards_row->addWidget(result_card(QStringLiteral("#fbbf24"), distance_), 1);
+    cards_row->addWidget(result_card(QStringLiteral("#67e8f9"), bearing_), 1);
+    mortar_layout->addLayout(cards_row);
+    pinned_reticle_ = new MortarReticleWidget;
+    pinned_reticle_->setObjectName(QStringLiteral("pinnedMortarReticle"));
+    mortar_layout->addWidget(pinned_reticle_);
     layout->addWidget(mortar_panel_);
 
     vehicle_panel_ = new QWidget;
@@ -491,6 +498,18 @@ void PinnedResultWindow::set_values(const QString& distance,
                                     const QString& bearing) {
     distance_->setText(distance);
     bearing_->setText(bearing);
+}
+
+void PinnedResultWindow::set_mortar_reticle(double distance_m) {
+    if (pinned_reticle_) pinned_reticle_->set_solution(distance_m);
+}
+
+void PinnedResultWindow::set_mortar_reticle_out_of_range(const QString& message) {
+    if (pinned_reticle_) pinned_reticle_->set_out_of_range(message);
+}
+
+void PinnedResultWindow::clear_mortar_reticle() {
+    if (pinned_reticle_) pinned_reticle_->clear();
 }
 
 void PinnedResultWindow::set_vehicle_values(const VehicleSolutionWidget& low,
