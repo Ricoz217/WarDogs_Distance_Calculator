@@ -78,7 +78,7 @@ if ($Package) {
         Compress-Archive -Path (Join-Path $installDirectory '*') -DestinationPath $archive -Force
         Write-Host "已生成：$archive"
     } else {
-        Write-Host "实验包位于：$installDirectory"
+        Write-Host "发布包位于：$installDirectory"
     }
 } else {
     Write-Host "程序位于：$(Join-Path $buildDirectory 'WarDogsDistanceCalculator.exe')"

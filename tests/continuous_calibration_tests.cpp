@@ -41,6 +41,21 @@ wardogs::Point impact_with_required_offset(
             base.y + std::cos(bearing) * range / 100.0};
 }
 
+double flat_trajectory_elevation(double distance_m, wardogs::Arc arc) {
+    const double principal =
+        std::asin(distance_m / wardogs::sph2_maximum_range_m);
+    return arc == wardogs::Arc::low ? principal / 2.0
+                                     : (std::numbers::pi - principal) / 2.0;
+}
+
+wardogs::Vector3 direction_from_bearing_and_elevation(double bearing_deg,
+                                                       double elevation_rad) {
+    const double bearing = bearing_deg * std::numbers::pi / 180.0;
+    const double horizontal = std::cos(elevation_rad);
+    return {horizontal * std::sin(bearing),
+            horizontal * std::cos(bearing), std::sin(elevation_rad)};
+}
+
 wardogs::FiringSnapshot snapshot(wardogs::Point base, wardogs::Point target,
                                  wardogs::Arc arc,
                                  double bearing_adjustment_deg = 0.0) {
@@ -56,14 +71,35 @@ wardogs::Point impact_with_rotated_baseline(
     double bearing_offset_deg, double mil_offset) {
     const auto firing = wardogs::corrected_solution(
         base, target, calibration, arc);
+    const double local_flat_range = wardogs::sph2_distance_for_mil(
+        firing.mil - mil_offset, arc);
     const auto world = calibration.local_to_world(
-        wardogs::direction_from_bearing_and_mil(
+        direction_from_bearing_and_elevation(
             firing.bearing_deg - bearing_offset_deg,
-            firing.mil - mil_offset));
+            flat_trajectory_elevation(local_flat_range, arc)));
     const double bearing = std::atan2(world[0], world[1]);
-    const double world_mil =
-        std::atan2(world[2], std::hypot(world[0], world[1])) * 1000.0;
-    const double range = wardogs::sph2_distance_for_mil(world_mil, arc);
+    const double world_elevation =
+        std::atan2(world[2], std::hypot(world[0], world[1]));
+    const double range = wardogs::sph2_maximum_range_m *
+                         std::sin(2.0 * world_elevation);
+    return {base.x + std::sin(bearing) * range / 100.0,
+            base.y + std::cos(bearing) * range / 100.0};
+}
+
+wardogs::Point impact_from_firing(
+    wardogs::Point base, const wardogs::FiringSnapshot& firing,
+    const wardogs::PlatformCalibration& actual_platform) {
+    const double flat_range = wardogs::sph2_distance_for_mil(
+        firing.mil, firing.arc);
+    const auto local = direction_from_bearing_and_elevation(
+        firing.bearing_deg,
+        flat_trajectory_elevation(flat_range, firing.arc));
+    const auto world = actual_platform.local_to_world(local);
+    const double bearing = std::atan2(world[0], world[1]);
+    const double elevation =
+        std::atan2(world[2], std::hypot(world[0], world[1]));
+    const double range = wardogs::sph2_maximum_range_m *
+                         std::sin(2.0 * elevation);
     return {base.x + std::sin(bearing) * range / 100.0,
             base.y + std::cos(bearing) * range / 100.0};
 }
@@ -78,25 +114,42 @@ int main() {
     const Point north{50, 68};
     const auto initial = model.solution(north, Arc::low);
     const auto plain = corrected_solution(base, north, baseline, Arc::low);
+    const auto direct_first = model.firing_snapshot(north, Arc::low);
+    check(direct_first.target == north && direct_first.arc == Arc::low &&
+              std::abs(direct_first.bearing_deg - initial.bearing_deg) < 1e-9 &&
+              std::abs(direct_first.mil - initial.mil) < 1e-9,
+          "one-step impact entry captures the current target and firing solution");
     check(std::abs(initial.bearing_deg - plain.bearing_deg) < 1e-9 &&
               std::abs(initial.mil - plain.mil) < 1e-9,
           "empty online model preserves the two-shot baseline");
 
-    // A single shot has limited influence, even when its correction is large.
+    // A plausible first shot should remove most of the miss now that the
+    // reticle overlay makes precise entry practical. Outliers remain gated by
+    // their confidence score below.
     const auto first = model.add_landing(
         snapshot(base, north, Arc::low),
         impact_with_required_offset(base, north, Arc::low, 1.0, 10.0));
     check(first.confidence > 0.35 && first.confidence <= 1.0,
           "a first shot is provisional, not automatically unreliable");
-    check(model.solution(north, Arc::low).bearing_deg > plain.bearing_deg &&
-              model.solution(north, Arc::low).bearing_deg < plain.bearing_deg + 1.0,
-          "one shot nudges but cannot fully determine the correction");
+    const auto after_first = model.solution(north, Arc::low);
+    check(after_first.bearing_deg > plain.bearing_deg + 0.6 &&
+              after_first.bearing_deg < plain.bearing_deg + 1.1 &&
+              after_first.mil > plain.mil + 6.0 &&
+              after_first.mil < plain.mil + 12.0,
+          "one plausible shot applies most of the local correction immediately");
 
     model.add_landing(snapshot(base, north, Arc::low),
                       impact_with_required_offset(base, north, Arc::low, 1.05, 9.0));
     model.add_landing(snapshot(base, north, Arc::low),
                       impact_with_required_offset(base, north, Arc::low, 0.95, 11.0));
     const auto learned = model.solution(north, Arc::low);
+    const auto direct_next = model.firing_snapshot(north, Arc::low, 12.0);
+    const auto raised = model.solution(north, Arc::low, 12.0);
+    check(direct_next.target == north && direct_next.arc == Arc::low &&
+              direct_next.target_height_delta_m == 12.0 &&
+              std::abs(direct_next.bearing_deg - raised.bearing_deg) < 1e-9 &&
+              std::abs(direct_next.mil - raised.mil) < 1e-9,
+          "later impact entry uses the latest compensation and target height");
     check(learned.bearing_deg > plain.bearing_deg + 0.65 &&
               learned.bearing_deg < plain.bearing_deg + 1.2,
           "consistent shots learn the bearing correction");
@@ -168,9 +221,9 @@ int main() {
 
     const auto high_plain = corrected_solution(base, north, baseline, Arc::high);
     const auto high_prediction = model.solution(north, Arc::high);
-    check(std::abs(high_prediction.bearing_deg - high_plain.bearing_deg) < 1e-9 &&
-              std::abs(high_prediction.mil - high_plain.mil) < 1e-9,
-          "low-arc data does not contaminate the high arc");
+    check(std::abs(high_prediction.bearing_deg - high_plain.bearing_deg) > 1e-5 ||
+              std::abs(high_prediction.mil - high_plain.mil) > 1e-5,
+          "low-arc observations transfer global platform information to high arc");
     const auto low_before_high = model.solution(north, Arc::low);
     model.add_landing(snapshot(base, north, Arc::high),
                       impact_with_required_offset(base, north, Arc::high,
@@ -182,8 +235,8 @@ int main() {
               high_plain.bearing_deg + 0.35,
           "high-arc observations update the high-arc solution");
     check(std::abs(model.solution(north, Arc::low).bearing_deg -
-                   low_before_high.bearing_deg) < 1e-9,
-          "high-arc observations leave the low-arc solution untouched");
+                   low_before_high.bearing_deg) > 1e-5,
+          "high-arc observations can refine the shared global platform model");
 
     model.clear();
     check(model.sample_count() == 0,
@@ -192,6 +245,50 @@ int main() {
     check(std::abs(restored.bearing_deg - plain.bearing_deg) < 1e-9 &&
               std::abs(restored.mil - plain.mil) < 1e-9,
           "clear restores the untouched two-shot model");
+
+    ContinuousCalibration global_model(base, baseline);
+    const double global_tilt = 4.0 * std::numbers::pi / 180.0;
+    const PlatformCalibration actual_platform{{{{1, 0, 0},
+                                                 {0, std::cos(global_tilt),
+                                                  -std::sin(global_tilt)},
+                                                 {0, std::sin(global_tilt),
+                                                  std::cos(global_tilt)}}},
+                                               0.0};
+    for (const Point training_target :
+         {Point{50, 68}, Point{68, 50}, Point{38, 62}}) {
+        for (int shot = 0; shot < 3; ++shot) {
+            const auto firing = global_model.firing_snapshot(
+                training_target, Arc::low);
+            global_model.add_landing(
+                firing, impact_from_firing(base, firing, actual_platform));
+        }
+    }
+    const auto& learned_platform = global_model.global_calibration();
+    const auto learned_probe = learned_platform.local_to_world(
+        direction_from_bearing_and_elevation(32.0, 0.4));
+    const auto actual_probe = actual_platform.local_to_world(
+        direction_from_bearing_and_elevation(32.0, 0.4));
+    const auto baseline_probe = baseline.local_to_world(
+        direction_from_bearing_and_elevation(32.0, 0.4));
+    double learned_error = 0.0;
+    double baseline_error = 0.0;
+    for (std::size_t index = 0; index < 3; ++index) {
+        learned_error += std::abs(learned_probe[index] - actual_probe[index]);
+        baseline_error += std::abs(baseline_probe[index] - actual_probe[index]);
+    }
+    check(learned_error < baseline_error * 0.55,
+          "consistent continuous shots refine the global platform model");
+    check(global_model.global_rotation_adjustment_deg() > 1.0,
+          "global refinement exposes its accumulated rotation adjustment");
+    global_model.clear();
+    const auto reset_probe = global_model.global_calibration().local_to_world(
+        direction_from_bearing_and_elevation(32.0, 0.4));
+    check(std::abs(reset_probe[0] - baseline_probe[0]) < 1e-9 &&
+              std::abs(reset_probe[1] - baseline_probe[1]) < 1e-9 &&
+              std::abs(reset_probe[2] - baseline_probe[2]) < 1e-9,
+          "clearing continuous compensation restores the original global model");
+    check(global_model.global_rotation_adjustment_deg() < 1e-9,
+          "clearing continuous compensation resets the global adjustment");
 
     const auto edited_shot = snapshot(base, north, Arc::low, 0.4);
     model.add_landing(

@@ -6,6 +6,7 @@
 
 #include <array>
 #include <algorithm>
+#include <cmath>
 #include <optional>
 #include <stdexcept>
 
@@ -42,6 +43,21 @@ std::optional<long> read_integer(const std::filesystem::path& path,
     }
 }
 
+std::optional<double> read_double(const std::filesystem::path& path,
+                                  const wchar_t* key) {
+    const std::wstring text = read_value(path, key, L"");
+    if (text.empty()) return std::nullopt;
+    try {
+        std::size_t consumed = 0;
+        const double value = std::stod(text, &consumed);
+        if (consumed != text.size() || !std::isfinite(value))
+            return std::nullopt;
+        return value;
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+}
+
 void remove_value(const std::filesystem::path& path, const wchar_t* key) {
     if (!WritePrivateProfileStringW(L"settings", key, nullptr, path.c_str())) {
         throw std::runtime_error("cannot remove settings value");
@@ -69,6 +85,9 @@ AppSettings load_settings_from(const std::filesystem::path& path) {
     settings.target_hotkey = read_value(path, L"target_hotkey", settings.target_hotkey);
     settings.quick_target_hotkey =
         read_value(path, L"quick_target_hotkey", settings.quick_target_hotkey);
+    settings.impact_hotkey = read_value(path, L"impact_hotkey", settings.impact_hotkey);
+    settings.ghost_arc_hotkey =
+        read_value(path, L"ghost_arc_hotkey", settings.ghost_arc_hotkey);
     settings.coordinate_pattern =
         read_value(path, L"coordinate_pattern", settings.coordinate_pattern);
     settings.backend = read_value(path, L"ocr_backend", L"rapid") == L"windows"
@@ -85,6 +104,31 @@ AppSettings load_settings_from(const std::filesystem::path& path) {
             static_cast<long>(PinnedCardPreferences::minimum_opacity_percent),
             static_cast<long>(PinnedCardPreferences::maximum_opacity_percent)));
     }
+    if (const auto opacity = read_integer(path, L"ghost_reticle_opacity_percent")) {
+        settings.ghost_reticle.opacity_percent = static_cast<int>(std::clamp(
+            *opacity,
+            static_cast<long>(GhostReticlePreferences::minimum_opacity_percent),
+            static_cast<long>(GhostReticlePreferences::maximum_opacity_percent)));
+    }
+    if (const auto width = read_integer(path, L"ghost_reticle_width")) {
+        settings.ghost_reticle.width = static_cast<int>(std::clamp(
+            *width, static_cast<long>(GhostReticlePreferences::minimum_width),
+            static_cast<long>(GhostReticlePreferences::maximum_width)));
+    }
+    if (const auto compensation = read_double(
+            path, L"ghost_reticle_bearing_compensation_deg")) {
+        settings.ghost_reticle.bearing_compensation_deg = std::clamp(
+            *compensation,
+            GhostReticlePreferences::minimum_bearing_compensation_deg,
+            GhostReticlePreferences::maximum_bearing_compensation_deg);
+    }
+    if (const auto width = read_integer(path, L"ghost_preset_screen_width"))
+        settings.ghost_reticle.preset_screen_width = static_cast<int>(*width);
+    if (const auto height = read_integer(path, L"ghost_preset_screen_height"))
+        settings.ghost_reticle.preset_screen_height = static_cast<int>(*height);
+    settings.ghost_reticle.preferred_arc =
+        read_value(path, L"ghost_reticle_preferred_arc", L"low") == L"high"
+            ? Arc::high : Arc::low;
     const std::wstring monitor = read_value(path, L"capture_monitor", L"");
     const auto left = read_integer(path, L"capture_left");
     const auto top = read_integer(path, L"capture_top");
@@ -106,6 +150,8 @@ void save_settings_to(const std::filesystem::path& path,
     write_value(path, L"base_hotkey", settings.base_hotkey);
     write_value(path, L"target_hotkey", settings.target_hotkey);
     write_value(path, L"quick_target_hotkey", settings.quick_target_hotkey);
+    write_value(path, L"impact_hotkey", settings.impact_hotkey);
+    write_value(path, L"ghost_arc_hotkey", settings.ghost_arc_hotkey);
     write_value(path, L"coordinate_pattern", settings.coordinate_pattern);
     write_value(path, L"ocr_backend",
                 settings.backend == OcrBackend::rapid ? L"rapid" : L"windows");
@@ -118,6 +164,29 @@ void save_settings_to(const std::filesystem::path& path,
                     settings.pinned_card.opacity_percent,
                     PinnedCardPreferences::minimum_opacity_percent,
                     PinnedCardPreferences::maximum_opacity_percent)));
+    write_value(path, L"ghost_reticle_opacity_percent",
+                std::to_wstring(std::clamp(
+                    settings.ghost_reticle.opacity_percent,
+                    GhostReticlePreferences::minimum_opacity_percent,
+                    GhostReticlePreferences::maximum_opacity_percent)));
+    write_value(path, L"ghost_reticle_width",
+                std::to_wstring(std::clamp(
+                    settings.ghost_reticle.width,
+                    GhostReticlePreferences::minimum_width,
+                    GhostReticlePreferences::maximum_width)));
+    write_value(
+        path, L"ghost_reticle_bearing_compensation_deg",
+        std::to_wstring(std::clamp(
+            settings.ghost_reticle.bearing_compensation_deg,
+            GhostReticlePreferences::minimum_bearing_compensation_deg,
+            GhostReticlePreferences::maximum_bearing_compensation_deg)));
+    write_value(path, L"ghost_preset_screen_width",
+                std::to_wstring(settings.ghost_reticle.preset_screen_width));
+    write_value(path, L"ghost_preset_screen_height",
+                std::to_wstring(settings.ghost_reticle.preset_screen_height));
+    write_value(path, L"ghost_reticle_preferred_arc",
+                settings.ghost_reticle.preferred_arc == Arc::high
+                    ? L"high" : L"low");
     if (settings.capture_region) {
         const auto& region = *settings.capture_region;
         write_value(path, L"capture_monitor", region.monitor_device);

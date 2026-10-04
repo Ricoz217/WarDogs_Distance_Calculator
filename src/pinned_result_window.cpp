@@ -41,8 +41,8 @@ namespace {
 
 constexpr int resize_margin = 8;
 
-QSize minimum_size(bool vehicle) { return vehicle ? QSize{350, 96} : QSize{320, 62}; }
-QSize default_size(bool vehicle) { return vehicle ? QSize{420, 116} : QSize{430, 78}; }
+QSize minimum_size(bool vehicle) { return vehicle ? QSize{350, 96} : QSize{320, 74}; }
+QSize default_size(bool vehicle) { return vehicle ? QSize{420, 116} : QSize{430, 92}; }
 
 class JumpSlider final : public QSlider {
 public:
@@ -177,6 +177,23 @@ QIcon lock_icon(bool locked) {
     return QIcon(QPixmap::fromImage(image));
 }
 
+QIcon reticle_icon(bool enabled) {
+    QImage image(24, 24, QImage::Format_ARGB32_Premultiplied);
+    image.fill(Qt::transparent);
+    QPainter painter(&image);
+    painter.setRenderHint(QPainter::Antialiasing);
+    const QColor color(enabled ? QStringLiteral("#67e8f9")
+                               : QStringLiteral("#94a3b8"));
+    painter.setPen(QPen(color, 1.7, Qt::SolidLine, Qt::RoundCap));
+    painter.drawEllipse(QPointF(12, 12), 5.5, 5.5);
+    painter.drawEllipse(QPointF(12, 12), 1.4, 1.4);
+    painter.drawLine(QPointF(12, 2.5), QPointF(12, 7));
+    painter.drawLine(QPointF(12, 17), QPointF(12, 21.5));
+    painter.drawLine(QPointF(2.5, 12), QPointF(7, 12));
+    painter.drawLine(QPointF(17, 12), QPointF(21.5, 12));
+    return QIcon(QPixmap::fromImage(image));
+}
+
 }  // namespace
 
 PinnedResultWindow::PinnedResultWindow(std::function<void()> exit_callback,
@@ -218,7 +235,8 @@ PinnedResultWindow::PinnedResultWindow(
     auto* mortar_layout = new QHBoxLayout(mortar_panel_);
     mortar_layout->setContentsMargins(0, 0, 0, 0);
     mortar_layout->setSpacing(8);
-    mortar_layout->addWidget(result_card(QStringLiteral("#fbbf24"), distance_), 1);
+    mortar_layout->addWidget(
+        result_card(QStringLiteral("#fbbf24"), distance_, &mortar_mil_), 1);
     mortar_layout->addWidget(result_card(QStringLiteral("#67e8f9"), bearing_), 1);
     layout->addWidget(mortar_panel_);
 
@@ -256,6 +274,7 @@ void PinnedResultWindow::build_context_menu() {
 
     lock_button_ = new QToolButton(context_menu_);
     lock_button_->setObjectName(QStringLiteral("pinnedLockButton"));
+    lock_button_->setProperty("pinnedMenuButton", true);
     lock_button_->setCheckable(true);
     lock_button_->setAutoRaise(false);
     lock_button_->setFixedSize(42, 40);
@@ -264,6 +283,7 @@ void PinnedResultWindow::build_context_menu() {
 
     opacity_slider_ = new JumpSlider(Qt::Horizontal, context_menu_);
     opacity_slider_->setObjectName(QStringLiteral("pinnedOpacitySlider"));
+    opacity_slider_->setProperty("pinnedMenuSlider", true);
     opacity_slider_->setRange(Preferences::minimum_opacity_percent,
                               Preferences::maximum_opacity_percent);
     opacity_slider_->setValue(preferences_.opacity_percent);
@@ -273,6 +293,30 @@ void PinnedResultWindow::build_context_menu() {
     opacity_slider_->setAccessibleName(QStringLiteral("结果卡片透明度"));
     controls_layout->addWidget(opacity_slider_);
     layout->addWidget(controls);
+
+    auto* ghost_row = new QWidget(context_menu_);
+    ghost_row->setObjectName(QStringLiteral("pinnedGhostRow"));
+    auto* ghost_layout = new QHBoxLayout(ghost_row);
+    ghost_layout->setContentsMargins(0, 0, 0, 0);
+    ghost_layout->setSpacing(8);
+    ghost_button_ = new QToolButton(context_menu_);
+    ghost_button_->setObjectName(QStringLiteral("ghostReticleToggle"));
+    ghost_button_->setProperty("pinnedMenuButton", true);
+    ghost_button_->setCheckable(true);
+    ghost_button_->setAutoRaise(false);
+    ghost_button_->setFixedSize(42, 40);
+    ghost_button_->setIconSize(QSize(22, 22));
+    ghost_layout->addWidget(ghost_button_);
+    ghost_opacity_slider_ = new JumpSlider(Qt::Horizontal, context_menu_);
+    ghost_opacity_slider_->setObjectName(
+        QStringLiteral("ghostReticleOpacitySlider"));
+    ghost_opacity_slider_->setProperty("pinnedMenuSlider", true);
+    ghost_opacity_slider_->setRange(20, 100);
+    ghost_opacity_slider_->setValue(ghost_opacity_percent_);
+    ghost_opacity_slider_->setMinimumWidth(150);
+    ghost_opacity_slider_->setAccessibleName(QStringLiteral("幽灵分划透明度"));
+    ghost_layout->addWidget(ghost_opacity_slider_);
+    layout->addWidget(ghost_row);
 
     auto* hotkey_row = new QWidget(context_menu_);
     hotkey_row->setObjectName(QStringLiteral("pinnedUnlockRow"));
@@ -297,6 +341,24 @@ void PinnedResultWindow::build_context_menu() {
             [this](bool locked) { set_locked(locked); });
     connect(opacity_slider_, &QSlider::valueChanged, this,
             [this](int value) { set_opacity_percent(value); });
+    connect(ghost_button_, &QToolButton::toggled,
+            this, [this](bool enabled) {
+                ghost_enabled_ = enabled;
+                ghost_button_->setIcon(reticle_icon(enabled));
+                ghost_button_->setToolTip(enabled
+                    ? QStringLiteral("关闭幽灵分划")
+                    : QStringLiteral("显示幽灵分划"));
+                if (ghost_enabled_changed_) ghost_enabled_changed_(enabled);
+            });
+    connect(ghost_opacity_slider_, &QSlider::valueChanged,
+            this, [this](int value) {
+                ghost_opacity_percent_ = std::clamp(value, 20, 100);
+                ghost_opacity_slider_->setToolTip(
+                    QStringLiteral("幽灵分划透明度：%1%")
+                        .arg(ghost_opacity_percent_));
+                if (ghost_opacity_changed_)
+                    ghost_opacity_changed_(ghost_opacity_percent_);
+            });
     connect(unlock_hotkey_, &QKeySequenceEdit::editingFinished, this, [this] {
         try {
             const auto parsed = wardogs::parse_hotkey(
@@ -321,6 +383,40 @@ void PinnedResultWindow::build_context_menu() {
     });
     update_lock_control();
     update_unlock_hotkey_control();
+    set_ghost_enabled(false);
+    set_ghost_opacity_percent(ghost_opacity_percent_);
+}
+
+void PinnedResultWindow::configure_ghost_controls(
+    bool enabled, int opacity_percent,
+    GhostEnabledChanged enabled_changed,
+    GhostOpacityChanged opacity_changed) {
+    ghost_enabled_changed_ = std::move(enabled_changed);
+    ghost_opacity_changed_ = std::move(opacity_changed);
+    set_ghost_enabled(enabled);
+    set_ghost_opacity_percent(opacity_percent);
+}
+
+void PinnedResultWindow::set_ghost_enabled(bool enabled) {
+    ghost_enabled_ = enabled;
+    if (!ghost_button_) return;
+    const QSignalBlocker blocker(ghost_button_);
+    ghost_button_->setChecked(enabled);
+    ghost_button_->setIcon(reticle_icon(enabled));
+    ghost_button_->setToolTip(enabled
+        ? QStringLiteral("关闭幽灵分划")
+        : QStringLiteral("显示幽灵分划"));
+    ghost_button_->setAccessibleName(ghost_button_->toolTip());
+}
+
+void PinnedResultWindow::set_ghost_opacity_percent(int opacity_percent) {
+    ghost_opacity_percent_ = std::clamp(opacity_percent, 20, 100);
+    if (!ghost_opacity_slider_) return;
+    const QSignalBlocker blocker(ghost_opacity_slider_);
+    ghost_opacity_slider_->setValue(ghost_opacity_percent_);
+    ghost_opacity_slider_->setToolTip(
+        QStringLiteral("幽灵分划透明度：%1%")
+            .arg(ghost_opacity_percent_));
 }
 
 void PinnedResultWindow::update_lock_control() {
@@ -420,17 +516,28 @@ void PinnedResultWindow::apply_mouse_transparency() {
     }
 }
 
-QWidget* PinnedResultWindow::result_card(const QString& color, QLabel*& value) {
+QWidget* PinnedResultWindow::result_card(const QString& color, QLabel*& value,
+                                         QLabel** secondary) {
     auto* card = new QFrame;
     card->setObjectName(QStringLiteral("resultCard"));
     auto* layout = new QVBoxLayout(card);
-    layout->setContentsMargins(8, 6, 8, 7);
+    layout->setContentsMargins(8, 5, 8, 6);
+    layout->setSpacing(0);
     value = new QLabel(QStringLiteral("—"));
     value->setAlignment(Qt::AlignCenter);
     value->setStyleSheet(QStringLiteral(
         "color:%1;font-family:'Bahnschrift';font-size:30px;font-weight:700;")
                              .arg(color));
     layout->addWidget(value);
+    if (secondary) {
+        *secondary = new QLabel(QStringLiteral("—"));
+        (*secondary)->setObjectName(QStringLiteral("pinnedMortarMil"));
+        (*secondary)->setAlignment(Qt::AlignCenter);
+        (*secondary)->setStyleSheet(QStringLiteral(
+            "color:#c4b5fd;font-family:'Bahnschrift';font-size:18px;"
+            "font-weight:700;"));
+        layout->addWidget(*secondary);
+    }
     return card;
 }
 
@@ -488,9 +595,12 @@ void PinnedResultWindow::set_mode(bool vehicle_mode) {
 }
 
 void PinnedResultWindow::set_values(const QString& distance,
-                                    const QString& bearing) {
+                                    const QString& bearing,
+                                    const QString& mortar_mil) {
     distance_->setText(distance);
     bearing_->setText(bearing);
+    mortar_mil_->setText(mortar_mil.isEmpty() ? QStringLiteral("—")
+                                               : mortar_mil);
 }
 
 void PinnedResultWindow::set_vehicle_values(const VehicleSolutionWidget& low,
@@ -571,6 +681,11 @@ void PinnedResultWindow::apply_font_scale() {
     bearing_->setStyleSheet(QStringLiteral(
         "color:#67e8f9;font-family:'Bahnschrift';font-size:%1px;font-weight:700;")
                                 .arg(size));
+    const int mil_size = std::max(15, qRound(18 * font_scale_));
+    mortar_mil_->setStyleSheet(QStringLiteral(
+        "color:#c4b5fd;font-family:'Bahnschrift';font-size:%1px;"
+        "font-weight:700;")
+                                   .arg(mil_size));
     applying_font_scale_ = false;
 }
 

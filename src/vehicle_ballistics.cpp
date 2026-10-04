@@ -159,8 +159,8 @@ double height_delta(Point base, Point point, const HeightLookup& lookup) {
     return *point_height - *base_height;
 }
 
-double equivalent_flat_range(double horizontal_distance_m, double height_delta_m,
-                             Arc arc) {
+double trajectory_elevation(double horizontal_distance_m,
+                            double height_delta_m, Arc arc) {
     if (horizontal_distance_m <= 0.0)
         throw std::invalid_argument("水平射程必须大于 0 m");
     const double discriminant = sph2_maximum_range_m * sph2_maximum_range_m -
@@ -174,9 +174,101 @@ double equivalent_flat_range(double horizontal_distance_m, double height_delta_m
     const double tangent = numerator / horizontal_distance_m;
     if (tangent <= 0.0 || !std::isfinite(tangent))
         throw std::invalid_argument("所选弹道无法命中目标高差");
-    const double elevation = std::atan(tangent);
-    return std::clamp(sph2_maximum_range_m * std::sin(2.0 * elevation), 0.0,
-                      sph2_maximum_range_m);
+    return std::atan(tangent);
+}
+
+double flat_range_for_elevation(double elevation, Arc arc) {
+    constexpr double tolerance = 1e-9;
+    const double boundary = std::numbers::pi / 4.0;
+    const bool valid = arc == Arc::low
+        ? elevation >= -tolerance && elevation <= boundary + tolerance
+        : elevation >= boundary - tolerance &&
+              elevation <= std::numbers::pi / 2.0 + tolerance;
+    if (!valid || !std::isfinite(elevation))
+        throw std::invalid_argument("平台姿态使所选弹道超出支持范围");
+    return std::clamp(
+        sph2_maximum_range_m * std::sin(2.0 * elevation), 0.0,
+        sph2_maximum_range_m);
+}
+
+double equivalent_flat_range(double horizontal_distance_m,
+                             double height_delta_m, Arc arc) {
+    return flat_range_for_elevation(
+        trajectory_elevation(horizontal_distance_m, height_delta_m, arc), arc);
+}
+
+Vector3 direction_from_bearing_and_elevation(double bearing_deg,
+                                              double elevation) {
+    const double bearing = bearing_deg * std::numbers::pi / 180.0;
+    const double horizontal = std::cos(elevation);
+    return {horizontal * std::sin(bearing), horizontal * std::cos(bearing),
+            std::sin(elevation)};
+}
+
+Vector3 solve_3x3(Matrix3 matrix, Vector3 right) {
+    double augmented[3][4]{};
+    for (std::size_t row = 0; row < 3; ++row) {
+        for (std::size_t column = 0; column < 3; ++column)
+            augmented[row][column] = matrix[row][column];
+        augmented[row][3] = right[row];
+    }
+    for (std::size_t column = 0; column < 3; ++column) {
+        std::size_t pivot = column;
+        for (std::size_t row = column + 1; row < 3; ++row)
+            if (std::abs(augmented[row][column]) >
+                std::abs(augmented[pivot][column]))
+                pivot = row;
+        if (std::abs(augmented[pivot][column]) < 1e-12)
+            throw std::invalid_argument("持续校准方向不足以更新全局模型");
+        if (pivot != column)
+            for (std::size_t item = column; item < 4; ++item)
+                std::swap(augmented[column][item], augmented[pivot][item]);
+        const double divisor = augmented[column][column];
+        for (std::size_t item = column; item < 4; ++item)
+            augmented[column][item] /= divisor;
+        for (std::size_t row = 0; row < 3; ++row) {
+            if (row == column) continue;
+            const double factor = augmented[row][column];
+            for (std::size_t item = column; item < 4; ++item)
+                augmented[row][item] -= factor * augmented[column][item];
+        }
+    }
+    return {augmented[0][3], augmented[1][3], augmented[2][3]};
+}
+
+Matrix3 rotation_from_vector(Vector3 vector) {
+    const double angle = std::sqrt(dot(vector, vector));
+    if (angle < 1e-14) return identity_rotation();
+    for (double& value : vector) value /= angle;
+    const auto [x, y, z] = vector;
+    const double cosine = std::cos(angle);
+    const double sine = std::sin(angle);
+    const double complement = 1.0 - cosine;
+    return {{{complement * x * x + cosine,
+              complement * x * y - sine * z,
+              complement * x * z + sine * y},
+             {complement * y * x + sine * z,
+              complement * y * y + cosine,
+              complement * y * z - sine * x},
+             {complement * z * x - sine * y,
+              complement * z * y + sine * x,
+              complement * z * z + cosine}}};
+}
+
+void accumulate_rotation_equation(Matrix3& normal, Vector3& right,
+                                  Vector3 predicted, Vector3 observed,
+                                  double weight) {
+    if (weight <= 0.0) return;
+    for (std::size_t row = 0; row < 3; ++row) {
+        for (std::size_t column = 0; column < 3; ++column) {
+            normal[row][column] += weight *
+                ((row == column ? 1.0 : 0.0) -
+                 predicted[row] * predicted[column]);
+        }
+    }
+    const auto residual = cross(predicted, observed);
+    for (std::size_t index = 0; index < 3; ++index)
+        right[index] += weight * residual[index];
 }
 
 }  // namespace
@@ -199,6 +291,20 @@ Vector3 direction_from_bearing_and_mil(double bearing_deg, double mil) {
     const double horizontal = std::cos(elevation);
     return {horizontal * std::sin(bearing), horizontal * std::cos(bearing),
             std::sin(elevation)};
+}
+
+Vector3 firing_direction(double bearing_deg, double mil, Arc arc) {
+    const double equivalent_range = sph2_distance_for_mil(mil, arc);
+    return direction_from_bearing_and_elevation(
+        bearing_deg, trajectory_elevation(equivalent_range, 0.0, arc));
+}
+
+Vector3 impact_direction(Point base, Point impact, Arc arc,
+                         double height_delta_m) {
+    const auto geometry = shot_geometry(base, impact, "落点不能与炮位重合");
+    return direction_from_bearing_and_elevation(
+        geometry.second,
+        trajectory_elevation(geometry.first, height_delta_m, arc));
 }
 
 double sph2_mil_for_distance(double distance_m, Arc arc) {
@@ -268,29 +374,29 @@ PlatformCalibration calibrate_platform(Point base, const CalibrationShot& first,
     const auto second_impact =
         shot_geometry(base, second.impact_point, "第二发实际落点不能与炮位重合");
     const std::array nominal{
-        direction_from_bearing_and_mil(
+        direction_from_bearing_and_elevation(
             first_aim.second,
-            sph2_mil_for_trajectory(first_aim.first,
-                                    height_delta(base, first.aim_point, height_lookup),
-                                    first.arc)),
-        direction_from_bearing_and_mil(
+            trajectory_elevation(
+                first_aim.first,
+                height_delta(base, first.aim_point, height_lookup), first.arc)),
+        direction_from_bearing_and_elevation(
             second_aim.second,
-            sph2_mil_for_trajectory(second_aim.first,
-                                    height_delta(base, second.aim_point, height_lookup),
-                                    second.arc))};
+            trajectory_elevation(
+                second_aim.first,
+                height_delta(base, second.aim_point, height_lookup), second.arc))};
     const std::array observed{
-        direction_from_bearing_and_mil(
+        direction_from_bearing_and_elevation(
             first_impact.second,
-            sph2_mil_for_trajectory(
+            trajectory_elevation(
                 first_impact.first,
-                height_delta(base, first.impact_point, height_lookup), first.arc,
-                true)),
-        direction_from_bearing_and_mil(
+                height_delta(base, first.impact_point, height_lookup),
+                first.arc)),
+        direction_from_bearing_and_elevation(
             second_impact.second,
-            sph2_mil_for_trajectory(
+            trajectory_elevation(
                 second_impact.first,
-                height_delta(base, second.impact_point, height_lookup), second.arc,
-                true))};
+                height_delta(base, second.impact_point, height_lookup),
+                second.arc))};
     const double nominal_angle =
         std::acos(std::clamp(dot(nominal[0], nominal[1]), -1.0, 1.0));
     const double observed_angle =
@@ -301,20 +407,69 @@ PlatformCalibration calibrate_platform(Point base, const CalibrationShot& first,
                 std::numbers::pi};
 }
 
+PlatformCalibration refine_platform_calibration(
+    const PlatformCalibration& prior,
+    std::span<const DirectionObservation> observations,
+    double prior_weight) {
+    if (!std::isfinite(prior_weight) || prior_weight <= 0.0)
+        throw std::invalid_argument("基础模型权重必须大于零");
+    Matrix3 rotation = prior.rotation;
+    constexpr double robust_scale_rad = 7.0 * std::numbers::pi / 180.0;
+    constexpr double maximum_step_rad = 2.0 * std::numbers::pi / 180.0;
+    for (int iteration = 0; iteration < 24; ++iteration) {
+        Matrix3 normal{};
+        Vector3 right{};
+        for (std::size_t axis = 0; axis < 3; ++axis) {
+            Vector3 local{};
+            local[axis] = 1.0;
+            accumulate_rotation_equation(
+                normal, right, matrix_vector(rotation, local),
+                prior.local_to_world(local), prior_weight);
+        }
+        for (const auto& observation : observations) {
+            if (!std::isfinite(observation.weight) || observation.weight < 0.0)
+                throw std::invalid_argument("持续校准权重必须是非负有限数值");
+            const auto predicted = matrix_vector(
+                rotation, normalize(observation.local_direction));
+            const auto observed = normalize(observation.world_direction);
+            const double angle = std::acos(std::clamp(
+                dot(predicted, observed), -1.0, 1.0));
+            const double scaled = angle / robust_scale_rad;
+            const double robust = 1.0 /
+                (1.0 + scaled * scaled * scaled * scaled);
+            accumulate_rotation_equation(
+                normal, right, predicted, observed,
+                observation.weight * robust);
+        }
+        auto step = solve_3x3(normal, right);
+        double length = std::sqrt(dot(step, step));
+        if (length < 1e-10) break;
+        if (length > maximum_step_rad) {
+            for (double& value : step) value *= maximum_step_rad / length;
+            length = maximum_step_rad;
+        }
+        rotation = matrix_multiply(rotation_from_vector(step), rotation);
+        if (length < 1e-8) break;
+    }
+    return {rotation, prior.pair_angle_residual_deg};
+}
+
 FiringAngles required_firing_angles(Point base, Point point,
                                     const PlatformCalibration& calibration,
                                     Arc arc, double height_delta_m) {
     const auto geometry = shot_geometry(base, point, "落点不能与炮位重合");
-    const double desired_mil = sph2_mil_for_trajectory(
-        geometry.first, height_delta_m, arc, true);
-    const auto desired_world =
-        direction_from_bearing_and_mil(geometry.second, desired_mil);
+    const double desired_elevation = trajectory_elevation(
+        geometry.first, height_delta_m, arc);
+    const auto desired_world = direction_from_bearing_and_elevation(
+        geometry.second, desired_elevation);
     const auto corrected = calibration.world_to_local(desired_world);
     double bearing = std::atan2(corrected[0], corrected[1]) * 180.0 /
                      std::numbers::pi;
     if (bearing < 0.0) bearing += 360.0;
-    const double mil =
-        std::atan2(corrected[2], std::hypot(corrected[0], corrected[1])) * 1000.0;
+    const double local_elevation =
+        std::atan2(corrected[2], std::hypot(corrected[0], corrected[1]));
+    const double equivalent_range = flat_range_for_elevation(local_elevation, arc);
+    const double mil = sph2_world_mil_for_distance(equivalent_range, arc);
     return {bearing, mil};
 }
 

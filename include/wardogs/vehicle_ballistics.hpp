@@ -5,6 +5,7 @@
 #include <array>
 #include <functional>
 #include <optional>
+#include <span>
 
 namespace wardogs {
 
@@ -32,6 +33,12 @@ struct FiringAngles {
     double mil{};
 };
 
+struct DirectionObservation {
+    Vector3 local_direction;
+    Vector3 world_direction;
+    double weight{1.0};
+};
+
 struct PlatformCalibration {
     Matrix3 rotation{};
     double pair_angle_residual_deg{};
@@ -47,6 +54,10 @@ inline constexpr double maximum_calibration_separation_deg = 150.0;
 [[nodiscard]] Matrix3 identity_rotation();
 [[nodiscard]] Vector3 direction_from_bearing_and_mil(double bearing_deg,
                                                      double mil);
+[[nodiscard]] Vector3 firing_direction(double bearing_deg, double mil,
+                                       Arc arc);
+[[nodiscard]] Vector3 impact_direction(Point base, Point impact, Arc arc,
+                                       double height_delta_m = 0.0);
 [[nodiscard]] double sph2_mil_for_distance(double distance_m, Arc arc);
 [[nodiscard]] double sph2_world_mil_for_distance(double distance_m, Arc arc);
 [[nodiscard]] double sph2_distance_for_mil(double mil, Arc arc);
@@ -56,6 +67,10 @@ inline constexpr double maximum_calibration_separation_deg = 150.0;
 [[nodiscard]] PlatformCalibration calibrate_platform(
     Point base, const CalibrationShot& first, const CalibrationShot& second,
     const HeightLookup& height_lookup = {});
+[[nodiscard]] PlatformCalibration refine_platform_calibration(
+    const PlatformCalibration& prior,
+    std::span<const DirectionObservation> observations,
+    double prior_weight = 1.5);
 [[nodiscard]] FiringAngles required_firing_angles(
     Point base, Point point, const PlatformCalibration& calibration, Arc arc,
     double height_delta_m = 0.0);

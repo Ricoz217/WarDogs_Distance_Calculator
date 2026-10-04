@@ -55,15 +55,36 @@ double weighted_median(std::vector<std::pair<double, double>> values) {
 
 ContinuousCalibration::ContinuousCalibration(Point base,
                                              PlatformCalibration baseline)
-    : base_(base), baseline_(baseline) {}
+    : base_(base), baseline_(baseline), active_(baseline) {}
 
 std::size_t ContinuousCalibration::sample_count() const noexcept {
     return samples_.size();
 }
 
+FiringSnapshot ContinuousCalibration::firing_snapshot(
+    Point target, Arc arc, double height_delta_m) const {
+    const auto current = solution(target, arc, height_delta_m);
+    return {target, arc, current.bearing_deg, current.mil, height_delta_m};
+}
+
 void ContinuousCalibration::clear() {
     samples_.clear();
     confidence_scores_.clear();
+    active_ = baseline_;
+}
+
+const PlatformCalibration& ContinuousCalibration::global_calibration() const noexcept {
+    return active_;
+}
+
+double ContinuousCalibration::global_rotation_adjustment_deg() const noexcept {
+    double trace = 0.0;
+    for (std::size_t row = 0; row < 3; ++row)
+        for (std::size_t column = 0; column < 3; ++column)
+            trace += active_.rotation[row][column] *
+                     baseline_.rotation[row][column];
+    const double cosine = std::clamp((trace - 1.0) / 2.0, -1.0, 1.0);
+    return std::acos(cosine) * 180.0 / std::numbers::pi;
 }
 
 double ContinuousCalibration::proximity(const Sample& sample,
@@ -123,20 +144,54 @@ ObservationAssessment ContinuousCalibration::add_landing(
     // changing state. The impact's inverse solution is the setting that the
     // frozen two-shot baseline would have required to land there.
     (void)sph2_distance_for_mil(firing.mil, firing.arc);
-    (void)corrected_solution(base_, firing.target, baseline_, firing.arc,
+    (void)corrected_solution(base_, firing.target, active_, firing.arc,
                              firing.target_height_delta_m);
     const auto impact_solution = required_firing_angles(
-        base_, impact, baseline_, firing.arc, impact_height_delta_m);
+        base_, impact, active_, firing.arc, impact_height_delta_m);
     const auto [bearing, range] = bearing_and_range(base_, firing.target);
     samples_.push_back({firing.target, firing.arc, bearing, range,
                         firing.target_height_delta_m,
                         wrapped_difference(firing.bearing_deg,
                                            impact_solution.bearing_deg),
-                        firing.mil - impact_solution.mil});
+                        firing.mil - impact_solution.mil,
+                        firing.bearing_deg, firing.mil, impact,
+                        impact_height_delta_m,
+                        firing_direction(firing.bearing_deg, firing.mil,
+                                         firing.arc),
+                        impact_direction(base_, impact, firing.arc,
+                                         impact_height_delta_m)});
     confidence_scores_.resize(samples_.size());
     for (std::size_t index = 0; index < samples_.size(); ++index)
         confidence_scores_[index] = confidence(index);
+    for (int pass = 0; pass < 3; ++pass) {
+        refit_global_calibration();
+        for (std::size_t index = 0; index < samples_.size(); ++index)
+            confidence_scores_[index] = confidence(index);
+    }
     return {confidence_scores_.back(), samples_.size()};
+}
+
+void ContinuousCalibration::refresh_offsets() {
+    for (auto& sample : samples_) {
+        const auto impact_solution = required_firing_angles(
+            base_, sample.impact, active_, sample.arc,
+            sample.impact_height_delta_m);
+        sample.bearing_offset_deg = wrapped_difference(
+            sample.firing_bearing_deg, impact_solution.bearing_deg);
+        sample.mil_offset = sample.firing_mil - impact_solution.mil;
+    }
+}
+
+void ContinuousCalibration::refit_global_calibration() {
+    std::vector<DirectionObservation> observations;
+    observations.reserve(samples_.size());
+    for (std::size_t index = 0; index < samples_.size(); ++index) {
+        observations.push_back({samples_[index].local_direction,
+                                samples_[index].world_direction,
+                                confidence_scores_[index]});
+    }
+    active_ = refine_platform_calibration(baseline_, observations, 1.5);
+    refresh_offsets();
 }
 
 std::pair<double, double> ContinuousCalibration::correction(
@@ -210,7 +265,13 @@ std::pair<double, double> ContinuousCalibration::correction(
                                   shared_bearing_sum / shared_weight_sum;
     const double shared_mil = shared_strength * shared_mil_sum / shared_weight_sum;
 
-    const double local_strength = std::min(1.0, local_weight_sum / 2.0);
+    // Precise reticle entry makes a plausible observation useful immediately.
+    // Confidence still suppresses isolated extreme misses, while a second
+    // consistent observation reaches full local strength. Cross-target shared
+    // correction above remains deliberately slower.
+    constexpr double local_evidence_for_full_strength = 0.8;
+    const double local_strength = std::min(
+        1.0, local_weight_sum / local_evidence_for_full_strength);
     const double local_bearing = local_weight_sum > 0.0
         ? local_bearing_sum / local_weight_sum : shared_bearing;
     const double local_mil = local_weight_sum > 0.0
@@ -226,7 +287,7 @@ std::pair<double, double> ContinuousCalibration::correction(
 
 CorrectedSolution ContinuousCalibration::solution(
     Point target, Arc arc, double height_delta_m) const {
-    auto result = corrected_solution(base_, target, baseline_, arc,
+    auto result = corrected_solution(base_, target, active_, arc,
                                      height_delta_m);
     const auto [bearing, mil] = correction(target, arc, height_delta_m);
     result.bearing_deg = std::fmod(result.bearing_deg + bearing + 360.0, 360.0);
