@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(WarDogsDistanceCalculator VERSION 1.3.1 LANGUAGES C CXX)
+project(WarDogsDistanceCalculator VERSION 1.4.0 LANGUAGES C CXX)
 set(CMAKE_CL_SHOWINCLUDES_PREFIX "注意: 包含文件:")
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets)
@@ -36,7 +36,9 @@ endif()
 
 add_library(wardogs_core
     src/calculator.cpp
+    src/continuous_calibration.cpp
     src/coordinates.cpp
+    src/ghost_reticle.cpp
     src/hotkeys.cpp
     src/image.cpp
     src/logger.cpp
@@ -65,6 +67,7 @@ if(WIN32)
         src/app_icon.cpp
         src/app.cpp
         src/capture.cpp
+        src/ghost_reticle_window.cpp
         src/main_window.cpp
         src/pinned_result_window.cpp
         src/selection_overlay.cpp
@@ -138,6 +141,22 @@ if(MSVC)
 endif()
 add_test(NAME wardogs_vehicle_ballistics_tests COMMAND wardogs_vehicle_ballistics_tests)
 
+add_executable(wardogs_continuous_calibration_tests
+    tests/continuous_calibration_tests.cpp)
+target_link_libraries(wardogs_continuous_calibration_tests PRIVATE wardogs_core)
+if(MSVC)
+    target_compile_options(wardogs_continuous_calibration_tests PRIVATE /W4 /permissive- /utf-8)
+endif()
+add_test(NAME wardogs_continuous_calibration_tests
+    COMMAND wardogs_continuous_calibration_tests)
+
+add_executable(wardogs_ghost_reticle_tests tests/ghost_reticle_tests.cpp)
+target_link_libraries(wardogs_ghost_reticle_tests PRIVATE wardogs_core)
+if(MSVC)
+    target_compile_options(wardogs_ghost_reticle_tests PRIVATE /W4 /permissive- /utf-8)
+endif()
+add_test(NAME wardogs_ghost_reticle_tests COMMAND wardogs_ghost_reticle_tests)
+
 add_executable(wardogs_terrain_tests tests/terrain_package_tests.cpp)
 target_link_libraries(wardogs_terrain_tests PRIVATE wardogs_terrain Qt6::Core)
 target_compile_definitions(wardogs_terrain_tests PRIVATE
@@ -156,7 +175,9 @@ add_custom_command(TARGET wardogs_terrain_tests POST_BUILD
 add_executable(wardogs_vehicle_ui_tests
     tests/vehicle_ui_tests.cpp
     src/app_icon.cpp
+    src/ghost_reticle_window.cpp
     src/pinned_result_window.cpp
+    src/settings_dialog.cpp
     src/vehicle_solution_widget.cpp
     src/window_title_bar.cpp
 )

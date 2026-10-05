@@ -27,6 +27,8 @@ class PinnedResultWindow final : public QWidget {
 public:
     using Preferences = wardogs::PinnedCardPreferences;
     using PreferencesChanged = std::function<bool(const Preferences&)>;
+    using GhostEnabledChanged = std::function<void(bool)>;
+    using GhostOpacityChanged = std::function<void(int)>;
 
     explicit PinnedResultWindow(std::function<void()> exit_callback,
                                 QWidget* parent = nullptr);
@@ -36,7 +38,8 @@ public:
                        QWidget* parent = nullptr);
 
     void set_mode(bool vehicle_mode);
-    void set_values(const QString& distance, const QString& bearing);
+    void set_values(const QString& distance, const QString& bearing,
+                    const QString& mortar_mil = {});
     void set_vehicle_values(const VehicleSolutionWidget& low,
                             const VehicleSolutionWidget& high);
     void set_error(bool error);
@@ -46,6 +49,11 @@ public:
     [[nodiscard]] int opacity_percent() const {
         return preferences_.opacity_percent;
     }
+    void configure_ghost_controls(bool enabled, int opacity_percent,
+                                  GhostEnabledChanged enabled_changed,
+                                  GhostOpacityChanged opacity_changed);
+    void set_ghost_enabled(bool enabled);
+    void set_ghost_opacity_percent(int opacity_percent);
 
 protected:
     bool event(QEvent* event) override;
@@ -63,7 +71,8 @@ protected:
 private:
     using Edges = std::set<std::string>;
 
-    static QWidget* result_card(const QString& color, QLabel*& value);
+    static QWidget* result_card(const QString& color, QLabel*& value,
+                                QLabel** secondary = nullptr);
     [[nodiscard]] Edges resize_edges_at(QPoint position) const;
     [[nodiscard]] static Qt::CursorShape cursor_for_edges(const Edges& edges);
     void resize_from_pointer(QPoint pointer);
@@ -82,9 +91,15 @@ private:
     QWidget* context_menu_{};
     QToolButton* lock_button_{};
     QSlider* opacity_slider_{};
+    QToolButton* ghost_button_{};
+    QSlider* ghost_opacity_slider_{};
     QKeySequenceEdit* unlock_hotkey_{};
+    GhostEnabledChanged ghost_enabled_changed_;
+    GhostOpacityChanged ghost_opacity_changed_;
+    bool ghost_enabled_{};
+    int ghost_opacity_percent_{80};
     QWidget *mortar_panel_{}, *vehicle_panel_{};
-    QLabel *distance_{}, *bearing_{};
+    QLabel *distance_{}, *bearing_{}, *mortar_mil_{};
     VehicleSolutionWidget *low_{}, *high_{};
     bool vehicle_mode_{};
     bool dragging_{};
@@ -92,7 +107,7 @@ private:
     Edges resize_edges_;
     QPoint resize_start_global_{};
     QRect resize_start_geometry_{};
-    std::map<bool, QSize> mode_sizes_{{false, {430, 78}}, {true, {420, 116}}};
+    std::map<bool, QSize> mode_sizes_{{false, {430, 92}}, {true, {420, 116}}};
     double font_scale_{1.0};
     bool applying_font_scale_{};
 };

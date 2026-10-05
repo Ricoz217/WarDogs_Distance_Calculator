@@ -2,6 +2,7 @@
 
 #include "wardogs/capture.hpp"
 #include "wardogs/core.hpp"
+#include "wardogs/ghost_reticle.hpp"
 #include "wardogs/pinned_preferences.hpp"
 
 #include <filesystem>
@@ -17,10 +18,13 @@ struct AppSettings {
     std::wstring base_hotkey{L"F9"};
     std::wstring target_hotkey{L"F10"};
     std::wstring quick_target_hotkey{L"F11"};
+    std::wstring impact_hotkey{L"F12"};
+    std::wstring ghost_arc_hotkey{L"F4"};
     OcrBackend backend{OcrBackend::rapid};
     std::wstring coordinate_pattern{default_ocr_coordinate_pattern};
     std::optional<CaptureRegion> capture_region;
     PinnedCardPreferences pinned_card;
+    GhostReticlePreferences ghost_reticle;
 };
 
 std::filesystem::path settings_path();

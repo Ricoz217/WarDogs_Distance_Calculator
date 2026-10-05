@@ -25,6 +25,7 @@ inline constexpr std::wstring_view default_ocr_coordinate_pattern =
     LR"(x\s*[:=]?\s*([-+]?\s*[0-9liI|Oo](?:[0-9liI|Oo\s]*[0-9liI|Oo])?\s*\.\s*[0-9liI|Oo]\s*[0-9liI|Oo](?:\s*[0-9liI|Oo])*)[\s,，;；:*&#.·]*y\s*[:=]?\s*([-+]?\s*[0-9liI|Oo](?:[0-9liI|Oo\s]*[0-9liI|Oo])?\s*\.\s*[0-9liI|Oo]\s*[0-9liI|Oo](?:\s*[0-9liI|Oo])*))";
 
 Shot calculate_shot(Point base, Point target);
+[[nodiscard]] double mortar_mil_for_distance(double distance_m);
 Point parse_ocr_coordinate(std::wstring_view text,
                            std::wstring_view pattern = default_ocr_coordinate_pattern);
 Point parse_manual_coordinate(std::wstring_view text);

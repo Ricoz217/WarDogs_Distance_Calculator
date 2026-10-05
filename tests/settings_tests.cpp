@@ -3,6 +3,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <cmath>
 
 namespace {
 
@@ -28,7 +29,19 @@ int main() {
     fs::remove_all(directory);
 
     AppSettings saved;
+    check(saved.impact_hotkey == L"F12",
+          "the impact OCR shortcut defaults to F12");
+    check(saved.ghost_arc_hotkey == L"F4",
+          "the ghost trajectory shortcut defaults to the unused F4 key");
+    check(saved.ghost_reticle.bearing_compensation_deg == 0.0,
+          "ghost bearing compensation defaults to zero degrees");
     saved.region_hotkey = L"Ctrl+F8";
+    saved.impact_hotkey = L"Ctrl+Shift+F12";
+    saved.ghost_arc_hotkey = L"Ctrl+Shift+G";
+    saved.ghost_reticle.opacity_percent = 72;
+    saved.ghost_reticle.width = 1120;
+    saved.ghost_reticle.bearing_compensation_deg = -0.35;
+    saved.ghost_reticle.preferred_arc = wardogs::Arc::high;
     saved.pinned_card.locked = true;
     saved.pinned_card.opacity_percent = 63;
     saved.pinned_card.unlock_hotkey = L"Ctrl+Shift+U";
@@ -38,6 +51,16 @@ int main() {
     const AppSettings loaded = wardogs::load_settings_from(path);
     check(loaded.region_hotkey == saved.region_hotkey,
           "ordinary settings survive the explicit-path round trip");
+    check(loaded.impact_hotkey == saved.impact_hotkey,
+          "the impact OCR shortcut survives the explicit-path round trip");
+    check(loaded.ghost_arc_hotkey == saved.ghost_arc_hotkey,
+          "the ghost trajectory shortcut survives the explicit-path round trip");
+    check(loaded.ghost_reticle.opacity_percent == 72 &&
+              loaded.ghost_reticle.width == 1120 &&
+              std::abs(loaded.ghost_reticle.bearing_compensation_deg + 0.35) <
+                  1e-9 &&
+              loaded.ghost_reticle.preferred_arc == wardogs::Arc::high,
+          "ghost reticle size, opacity, bearing offset, and trajectory persist");
     check(loaded.pinned_card.locked,
           "the pinned card lock state survives the explicit-path round trip");
     check(loaded.pinned_card.opacity_percent == 63,
@@ -83,6 +106,16 @@ int main() {
     }
     check(wardogs::load_settings_from(path).pinned_card.opacity_percent == 35,
           "persisted card opacity is clamped to the visible minimum");
+
+    {
+        std::wofstream invalid_ghost(path, std::ios::trunc);
+        invalid_ghost << L"[settings]\n"
+                         L"ghost_reticle_opacity_percent=1\n"
+                         L"ghost_reticle_width=12\n";
+    }
+    const auto clamped_ghost = wardogs::load_settings_from(path).ghost_reticle;
+    check(clamped_ghost.opacity_percent == 20 && clamped_ghost.width == 480,
+          "invalid ghost opacity and size are clamped to usable minimums");
 
     saved.capture_region.reset();
     wardogs::save_settings_to(path, saved);

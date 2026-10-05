@@ -61,6 +61,16 @@ int main() {
     const auto shot = wardogs::calculate_shot({0, 0}, {3, 4});
     close(shot.distance, 5, "distance uses Euclidean length");
     close(shot.angle, 36.86989764584402, "north-zero diagonal bearing");
+    close(wardogs::mortar_mil_for_distance(132.0), 850.0,
+          "mortar table keeps the official near endpoint");
+    close(wardogs::mortar_mil_for_distance(684.0), 150.0,
+          "mortar table keeps the official far endpoint");
+    close(wardogs::mortar_mil_for_distance(136.0), 845.0,
+          "mortar MIL is linearly interpolated between upstream samples");
+    rejects([] { (void)wardogs::mortar_mil_for_distance(131.9); },
+            "mortar table rejects targets below the official minimum range");
+    rejects([] { (void)wardogs::mortar_mil_for_distance(684.1); },
+            "mortar table rejects targets beyond the official maximum range");
 
     const std::vector<std::pair<std::wstring, Point>> ocr_cases{
         {L"x12.34, y56.78", {12.34, 56.78}},
