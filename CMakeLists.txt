@@ -44,6 +44,7 @@ add_library(wardogs_core
     src/logger.cpp
     src/ocr.cpp
     src/presentation.cpp
+    src/sph2_drag_model.cpp
     src/vehicle_ballistics.cpp
 )
 target_include_directories(wardogs_core PUBLIC include)
@@ -124,6 +125,10 @@ install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime/LICENSE.txt"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime/ThirdPartyNotices.txt"
     DESTINATION licenses/onnxruntime
+)
+install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/wardogs-calculator/LICENSE.txt"
+    DESTINATION licenses/wardogs-calculator
 )
 
 enable_testing()
