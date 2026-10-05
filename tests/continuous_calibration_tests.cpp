@@ -104,6 +104,34 @@ wardogs::Point impact_from_firing(
             base.y + std::cos(bearing) * range / 100.0};
 }
 
+wardogs::Point elevated_impact_with_command_bias(
+    wardogs::Point base, wardogs::Point target, wardogs::Arc arc,
+    double height_delta_m, const wardogs::FiringSnapshot& firing,
+    double required_command_bias_mil) {
+    const auto target_shot = wardogs::calculate_shot(base, target);
+    const double target_bearing = target_shot.angle * std::numbers::pi / 180.0;
+    const double required_mil = firing.mil - required_command_bias_mil;
+    double lower = 780.0;
+    double upper = 2500.0;
+    for (int iteration = 0; iteration < 60; ++iteration) {
+        const double range = (lower + upper) / 2.0;
+        const wardogs::Point probe{
+            base.x + std::sin(target_bearing) * range / 100.0,
+            base.y + std::cos(target_bearing) * range / 100.0};
+        const double probe_mil = wardogs::required_firing_angles(
+            base, probe,
+            {wardogs::identity_rotation(), 0.0}, arc,
+            height_delta_m).mil;
+        if (probe_mil < required_mil)
+            lower = range;
+        else
+            upper = range;
+    }
+    const double range = (lower + upper) / 2.0;
+    return {base.x + std::sin(target_bearing) * range / 100.0,
+            base.y + std::cos(target_bearing) * range / 100.0};
+}
+
 }  // namespace
 
 int main() {
@@ -122,6 +150,68 @@ int main() {
     check(std::abs(initial.bearing_deg - plain.bearing_deg) < 1e-9 &&
               std::abs(initial.mil - plain.mil) < 1e-9,
           "empty online model preserves the two-shot baseline");
+
+    // The terrain solver exposes an ensemble-median command MIL.  A landing
+    // exactly at the elevated target must therefore be a zero-residual
+    // observation for the online model as well; otherwise continuous
+    // calibration mistakes disagreement inside the ballistic ensemble for a
+    // platform rotation and drifts after an already-correct shot.
+    {
+        struct PerfectLandingCase {
+            Point target;
+            Arc arc;
+            double height_m;
+        };
+        for (const auto& item : {
+                 PerfectLandingCase{{50, 67.5}, Arc::low, 330.0},
+                 PerfectLandingCase{{67.5, 50}, Arc::high, -120.0}}) {
+            ContinuousCalibration elevated(base, baseline);
+            const auto before = elevated.solution(
+                item.target, item.arc, item.height_m);
+            for (int shot = 0; shot < 3; ++shot) {
+                const auto firing = elevated.firing_snapshot(
+                    item.target, item.arc, item.height_m);
+                elevated.add_landing(
+                    firing, item.target, item.height_m);
+            }
+            const auto after = elevated.solution(
+                item.target, item.arc, item.height_m);
+            check(elevated.global_rotation_adjustment_deg() < 1e-6,
+                  "perfect elevated landings do not invent a platform rotation");
+            check(std::abs(after.bearing_deg - before.bearing_deg) < 1e-6 &&
+                      std::abs(after.mil - before.mil) < 1e-6,
+                  "perfect elevated landings do not create continuous compensation");
+        }
+    }
+
+    {
+        ContinuousCalibration elevated(base, baseline);
+        const Point raised_target{50, 67.5};
+        constexpr double raised_height_m = 330.0;
+        constexpr double actual_bias_mil = 10.0;
+        const double unbiased_mil = elevated.solution(
+            raised_target, Arc::low, raised_height_m).mil;
+        double first_corrected_mil = unbiased_mil;
+        for (int shot = 0; shot < 3; ++shot) {
+            const auto firing = elevated.firing_snapshot(
+                raised_target, Arc::low, raised_height_m);
+            elevated.add_landing(
+                firing,
+                elevated_impact_with_command_bias(
+                    base, raised_target, Arc::low, raised_height_m,
+                    firing, actual_bias_mil),
+                raised_height_m);
+            if (shot == 0)
+                first_corrected_mil = elevated.solution(
+                    raised_target, Arc::low, raised_height_m).mil;
+        }
+        const double learned_mil = elevated.solution(
+            raised_target, Arc::low, raised_height_m).mil;
+        check(first_corrected_mil > unbiased_mil + 6.0,
+              "one elevated landing applies most of a plausible MIL bias");
+        check(std::abs(learned_mil - (unbiased_mil + actual_bias_mil)) < 2.0,
+              "elevated continuous calibration converges on a repeatable MIL bias");
+    }
 
     // A plausible first shot should remove most of the miss now that the
     // reticle overlay makes precise entry practical. Outliers remain gated by

@@ -383,8 +383,10 @@ Solution solve(Arc arc, double horizontal_distance_m, double flat_mil,
     const double command = commands.size() % 2 != 0
         ? commands[middle]
         : (commands[middle - 1] + commands[middle]) / 2.0;
-    const Solution result{
-        command, *full_elevation, commands.front(), commands.back()};
+    const double effective_elevation =
+        references.front() + (command - flat_mil) / 1000.0;
+    const Solution result{command, effective_elevation, *full_elevation,
+                          commands.front(), commands.back()};
     if (cache.size() >= 64) cache.erase(cache.begin());
     cache.push_back({arc, horizontal_distance_m, flat_mil, height_delta_m,
                      result});

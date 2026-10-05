@@ -168,11 +168,14 @@ double trajectory_elevation(double horizontal_distance_m,
         throw std::invalid_argument("水平射程超出支持范围");
     const double flat_mil =
         sph2_world_mil_for_distance(horizontal_distance_m, arc);
-    if (std::abs(height_delta_m) < 1e-9 &&
-        (horizontal_distance_m < 780.0 ||
-         flat_mil < (arc == Arc::low ? 20.0 : 610.0) ||
-         flat_mil > (arc == Arc::low ? 600.0 : 1390.0)))
-        return flat_mil / 1000.0;
+    const bool fitted_domain = horizontal_distance_m >= 780.0 &&
+        flat_mil >= (arc == Arc::low ? 20.0 : 610.0) &&
+        flat_mil <= (arc == Arc::low ? 600.0 : 1390.0);
+    if (fitted_domain)
+        return sph2_drag::solve(arc, horizontal_distance_m, flat_mil,
+                                height_delta_m)
+            .effective_elevation_rad;
+    if (std::abs(height_delta_m) < 1e-9) return flat_mil / 1000.0;
     return sph2_drag::full_model_elevation(
         arc, horizontal_distance_m, flat_mil, height_delta_m);
 }
@@ -275,9 +278,19 @@ Vector3 direction_from_bearing_and_mil(double bearing_deg, double mil) {
 
 Vector3 firing_direction(double bearing_deg, double mil, Arc arc) {
     const double flat_distance = sph2_distance_for_mil(mil, arc);
+    return firing_direction_for_reference(bearing_deg, mil, arc,
+                                          flat_distance);
+}
+
+Vector3 firing_direction_for_reference(
+    double bearing_deg, double mil, Arc arc,
+    double reference_horizontal_distance_m) {
+    const double flat_mil = sph2_world_mil_for_distance(
+        reference_horizontal_distance_m, arc);
+    const double reference_elevation = trajectory_elevation(
+        reference_horizontal_distance_m, 0.0, arc);
     return direction_from_bearing_and_elevation(
-        bearing_deg,
-        sph2_drag::full_model_elevation(arc, flat_distance, mil, 0.0));
+        bearing_deg, reference_elevation + (mil - flat_mil) / 1000.0);
 }
 
 Vector3 impact_direction(Point base, Point impact, Arc arc,
@@ -455,7 +468,7 @@ FiringAngles required_firing_angles(Point base, Point point,
               arc, geometry.first, flat_mil, height_delta_m)}
         : std::nullopt;
     const double desired_elevation = trajectory
-        ? trajectory->full_model_elevation_rad
+        ? trajectory->effective_elevation_rad
         : trajectory_elevation(geometry.first, height_delta_m, arc);
     const auto desired_world = direction_from_bearing_and_elevation(
         geometry.second, desired_elevation);

@@ -6,6 +6,10 @@ namespace wardogs::sph2_drag {
 
 struct Solution {
     double command_mil{};
+    // Internal trajectory direction paired with command_mil.  The fitted
+    // full-model flat reference is shifted by the ensemble-median command
+    // delta so calibration and the displayed solution use one definition.
+    double effective_elevation_rad{};
     double full_model_elevation_rad{};
     double minimum_command_mil{};
     double maximum_command_mil{};
