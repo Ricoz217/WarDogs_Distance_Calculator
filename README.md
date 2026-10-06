@@ -2,7 +2,7 @@
 
 Windows 游戏坐标 OCR 与射表计算工具。方位角以正北（Y 轴正向）为 `0°`，顺时针一周；距离按 `1 游戏单位 = 100 m` 显示。
 
-当前版本：`1.4.0`
+当前版本：`1.4.1`
 
 使用教程：[War Dogs 射表计算器视频教程（Bilibili）](https://www.bilibili.com/video/BV1d3Y16MEWh)
 
@@ -97,7 +97,7 @@ Windows 游戏坐标 OCR 与射表计算工具。方位角以正北（Y 轴正�
 
 数据以 `2 m` 水平间隔、`0.1 m` 高程单位量化，按区块使用 Zstandard 压缩。程序只在查询坐标时解压所需区块，并使用小型 LRU 缓存；切换地图时只打开当前地图，不会把整张地图读入内存。
 
-本实验分支使用锚定平地射表的拟合阻力模型计算高差修正，再以有效发射方向完成三维姿态校准；模型来源、实测回放和限制见 [拟合阻力弹道实验](docs/drag-ballistics-experiment.md)。
+`v1.4.1` 使用锚定平地射表的拟合阻力模型计算高差修正，再以有效发射方向完成三维姿态校准；模型来源、实测回放和限制见 [拟合阻力弹道说明](docs/drag-ballistics-experiment.md)。
 
 ## 使用限制
 
@@ -116,7 +116,7 @@ Windows 游戏坐标 OCR 与射表计算工具。方位角以正北（Y 轴正�
 脚本会配置 Release 构建、运行测试、部署 Qt 运行库并生成：
 
 ```text
-out\WarDogsDistanceCalculator-v1.4.0-win-x64.zip
+out\WarDogsDistanceCalculator-v1.4.1-win-x64.zip
 ```
 
 仓库已携带 ONNX Runtime x64 运行文件和 PP-OCRv6 识别模型，构建过程不联网。

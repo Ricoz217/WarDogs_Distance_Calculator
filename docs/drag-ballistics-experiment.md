@@ -1,6 +1,6 @@
-# 拟合阻力弹道实验
+# 拟合阻力弹道模型
 
-本实验分支以 WARDOGS Artillery Calculator 的 SPH-2 数值高度模型替换原有真空抛体假设。上游仓库：
+`v1.4.1` 以 WARDOGS Artillery Calculator 的 SPH-2 数值高度模型替换原有真空抛体假设。上游仓库：
 
 <https://github.com/apollyon-sys/wardogs-calculator>
 
