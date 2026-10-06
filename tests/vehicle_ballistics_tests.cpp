@@ -38,60 +38,12 @@ wardogs::Matrix3 rotation_x(double degrees) {
              {0, std::sin(angle), std::cos(angle)}}};
 }
 
-double trajectory_elevation(double distance_m, double height_delta_m,
-                            wardogs::Arc arc) {
-    const double maximum = wardogs::sph2_maximum_range_m;
-    const double root = std::sqrt(maximum * maximum - distance_m * distance_m -
-                                  2.0 * maximum * height_delta_m);
-    return std::atan((maximum + (arc == wardogs::Arc::low ? -root : root)) /
-                     distance_m);
-}
-
-double flat_trajectory_elevation(double distance_m, wardogs::Arc arc) {
-    return trajectory_elevation(distance_m, 0.0, arc);
-}
-
 wardogs::Vector3 direction_from_bearing_and_elevation(double bearing_deg,
                                                        double elevation_rad) {
     const double bearing = bearing_deg * std::numbers::pi / 180.0;
     const double horizontal = std::cos(elevation_rad);
     return {horizontal * std::sin(bearing),
             horizontal * std::cos(bearing), std::sin(elevation_rad)};
-}
-
-wardogs::Point impact_for_rotation(wardogs::Point base, wardogs::Point aim,
-                                   wardogs::Arc arc,
-                                   const wardogs::Matrix3& rotation,
-                                   double aim_height_delta_m = 0.0,
-                                   double impact_height_delta_m = 0.0) {
-    const double dx = aim.x - base.x;
-    const double dy = aim.y - base.y;
-    const double distance = std::hypot(dx, dy) * 100.0;
-    double bearing = std::atan2(dx, dy) * 180.0 / std::numbers::pi;
-    if (bearing < 0) bearing += 360.0;
-    const auto direction = direction_from_bearing_and_elevation(
-        bearing, trajectory_elevation(distance, aim_height_delta_m, arc));
-    wardogs::Vector3 world{};
-    for (std::size_t row = 0; row < 3; ++row)
-        for (std::size_t column = 0; column < 3; ++column)
-            world[row] += rotation[row][column] * direction[column];
-    double actual_bearing =
-        std::atan2(world[0], world[1]) * 180.0 / std::numbers::pi;
-    if (actual_bearing < 0) actual_bearing += 360.0;
-    const double actual_elevation =
-        std::atan2(world[2], std::hypot(world[0], world[1]));
-    const double cosine = std::cos(actual_elevation);
-    const double tangent = std::tan(actual_elevation);
-    const double center = wardogs::sph2_maximum_range_m * cosine * cosine *
-                          tangent;
-    const double root = std::sqrt(
-        center * center - 2.0 * wardogs::sph2_maximum_range_m * cosine *
-                              cosine * impact_height_delta_m);
-    const double actual_distance = center + root;
-    return {base.x + std::sin(actual_bearing * std::numbers::pi / 180.0) *
-                         actual_distance / 100.0,
-            base.y + std::cos(actual_bearing * std::numbers::pi / 180.0) *
-                         actual_distance / 100.0};
 }
 
 }  // namespace
@@ -116,67 +68,54 @@ int main() {
     rejects([] { (void)wardogs::sph2_mil_for_distance(700, Arc::low); },
             "unsupported low range is rejected");
 
+    close(wardogs::sph2_mil_for_trajectory(
+              1751.097084687197, 330.35, Arc::high),
+          1124.19921875,
+          "drag ensemble reproduces upstream high-arc height estimate",
+          0.03);
+    close(wardogs::sph2_mil_for_trajectory(1800.0, 100.0, Arc::low),
+          210.654296875,
+          "drag ensemble reproduces upstream low-arc height estimate",
+          0.03);
+    close(wardogs::sph2_mil_for_trajectory(
+              1728.7180221192812, -41.125, Arc::high),
+          1147.8292253057916,
+          "drag ensemble reproduces upstream downhill estimate",
+          0.03);
+
     const Point base{50, 50};
     const auto rotation = rotation_x(5);
-    const Point first_aim{50, 68};
-    const Point second_aim{68, 50};
-    const auto calibration = wardogs::calibrate_platform(
-        base,
-        CalibrationShot{first_aim,
-                        impact_for_rotation(base, first_aim, Arc::low, rotation),
-                        Arc::low},
-        CalibrationShot{
-            second_aim,
-            impact_for_rotation(base, second_aim, Arc::high, rotation),
-            Arc::high});
-    const auto probe = wardogs::direction_from_bearing_and_mil(42, 500);
-    const auto recovered = calibration.local_to_world(probe);
-    for (std::size_t row = 0; row < 3; ++row) {
-        double expected = 0;
-        for (std::size_t column = 0; column < 3; ++column)
-            expected += rotation[row][column] * probe[column];
-        close(recovered[row], expected, "two shots recover platform rotation",
-              1e-9);
-    }
-    close(calibration.pair_angle_residual_deg, 0,
-          "synthetic calibration residual", 1e-9);
-
-    const Point raised_first_aim{50, 68};
-    const Point lowered_second_aim{70, 50};
-    constexpr double first_aim_height = 80.0;
-    constexpr double first_impact_height = 25.0;
-    constexpr double second_aim_height = -35.0;
-    constexpr double second_impact_height = -10.0;
-    const Point raised_first_impact = impact_for_rotation(
-        base, raised_first_aim, Arc::low, rotation, first_aim_height,
-        first_impact_height);
-    const Point lowered_second_impact = impact_for_rotation(
-        base, lowered_second_aim, Arc::high, rotation, second_aim_height,
-        second_impact_height);
-    const auto varied_height = [&](Point point) -> std::optional<double> {
-        if (point == base) return 0.0;
-        if (point == raised_first_aim) return first_aim_height;
-        if (point == raised_first_impact) return first_impact_height;
-        if (point == lowered_second_aim) return second_aim_height;
-        if (point == lowered_second_impact) return second_impact_height;
+    const Point field_base{97.88, 109.54};
+    const Point first_aim{87.62, 95.51};
+    const Point first_impact{89.06, 97.59};
+    const Point second_aim{84.43, 116.13};
+    const Point second_impact{85.89, 119.41};
+    const auto measured_height = [&](Point point) -> std::optional<double> {
+        if (point == field_base) return 0.0;
+        if (point == first_aim) return -41.2;
+        if (point == first_impact) return -10.9;
+        if (point == second_aim) return 155.875;
+        if (point == second_impact) return 248.875;
         return std::nullopt;
     };
-    const auto height_calibration = wardogs::calibrate_platform(
-        base,
-        {raised_first_aim, raised_first_impact, Arc::low},
-        {lowered_second_aim, lowered_second_impact, Arc::high},
-        varied_height);
-    close(height_calibration.pair_angle_residual_deg, 0,
-          "height-aware synthetic calibration closes in physical angle space",
-          1e-8);
-    const auto height_recovered = height_calibration.local_to_world(probe);
-    for (std::size_t row = 0; row < 3; ++row) {
-        double expected = 0;
-        for (std::size_t column = 0; column < 3; ++column)
-            expected += rotation[row][column] * probe[column];
-        close(height_recovered[row], expected,
-              "height-aware calibration recovers platform rotation", 1e-8);
-    }
+    const CalibrationShot measured_first{first_aim, first_impact, Arc::high};
+    const CalibrationShot measured_second{second_aim, second_impact, Arc::high};
+    const auto drag_calibration = wardogs::calibrate_platform(
+        field_base, measured_first, measured_second, measured_height);
+    const auto flat_calibration = wardogs::calibrate_platform(
+        field_base, measured_first, measured_second);
+    check(std::isfinite(drag_calibration.pair_angle_residual_deg),
+          "field calibration produces a finite fitted-drag residual");
+    check(drag_calibration.pair_angle_residual_deg < 1.6,
+          "fitted-drag model reduces the former vacuum-model field residual");
+    check(std::isfinite(flat_calibration.pair_angle_residual_deg),
+          "flat field calibration remains available as a diagnostic baseline");
+    const auto replayed_first_solution = wardogs::corrected_solution(
+        field_base, {80.58, 106.83}, drag_calibration, Arc::high, 330.35);
+    close(replayed_first_solution.mil, 1072.741301,
+          "published field log replays near its later converged command", 0.05);
+
+    const auto probe = wardogs::direction_from_bearing_and_mil(42, 500);
 
     const auto identity = wardogs::PlatformCalibration{
         wardogs::identity_rotation(), 0};
@@ -190,16 +129,10 @@ int main() {
 
     const auto tilted_solution = wardogs::corrected_solution(
         {20, 20}, {20, 38}, {rotation_x(5), 0.0}, Arc::low);
-    const double desired_world_elevation =
-        flat_trajectory_elevation(1800.0, Arc::low);
-    const double required_local_elevation =
-        desired_world_elevation - 5.0 * std::numbers::pi / 180.0;
-    const double required_equivalent_range = wardogs::sph2_maximum_range_m *
-        std::sin(2.0 * required_local_elevation);
     close(tilted_solution.mil,
-          wardogs::sph2_mil_for_distance(required_equivalent_range, Arc::low),
-          "platform tilt rotates physical launch elevation before sight lookup",
-          1e-8);
+          flat.mil - 5.0 * std::numbers::pi / 180.0 * 1000.0,
+          "platform tilt converts local elevation back to sight milliradians",
+          0.03);
 
     std::vector<wardogs::DirectionObservation> observations;
     for (double bearing : {0.0, 45.0, 90.0, 180.0, 270.0}) {

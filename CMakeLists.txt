@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(WarDogsDistanceCalculator VERSION 1.4.0 LANGUAGES C CXX)
+project(WarDogsDistanceCalculator VERSION 1.4.1 LANGUAGES C CXX)
 set(CMAKE_CL_SHOWINCLUDES_PREFIX "注意: 包含文件:")
 
 find_package(Qt6 6.8 REQUIRED COMPONENTS Widgets)
@@ -44,6 +44,7 @@ add_library(wardogs_core
     src/logger.cpp
     src/ocr.cpp
     src/presentation.cpp
+    src/sph2_drag_model.cpp
     src/vehicle_ballistics.cpp
 )
 target_include_directories(wardogs_core PUBLIC include)
@@ -124,6 +125,10 @@ install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime/LICENSE.txt"
     "${CMAKE_CURRENT_SOURCE_DIR}/third_party/onnxruntime/ThirdPartyNotices.txt"
     DESTINATION licenses/onnxruntime
+)
+install(FILES
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/wardogs-calculator/LICENSE.txt"
+    DESTINATION licenses/wardogs-calculator
 )
 
 enable_testing()

@@ -156,8 +156,9 @@ ObservationAssessment ContinuousCalibration::add_landing(
                         firing.mil - impact_solution.mil,
                         firing.bearing_deg, firing.mil, impact,
                         impact_height_delta_m,
-                        firing_direction(firing.bearing_deg, firing.mil,
-                                         firing.arc),
+                        firing_direction_for_reference(
+                            firing.bearing_deg, firing.mil, firing.arc,
+                            range),
                         impact_direction(base_, impact, firing.arc,
                                          impact_height_delta_m)});
     confidence_scores_.resize(samples_.size());

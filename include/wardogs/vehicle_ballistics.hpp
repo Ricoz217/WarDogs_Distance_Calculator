@@ -56,6 +56,9 @@ inline constexpr double maximum_calibration_separation_deg = 150.0;
                                                      double mil);
 [[nodiscard]] Vector3 firing_direction(double bearing_deg, double mil,
                                        Arc arc);
+[[nodiscard]] Vector3 firing_direction_for_reference(
+    double bearing_deg, double mil, Arc arc,
+    double reference_horizontal_distance_m);
 [[nodiscard]] Vector3 impact_direction(Point base, Point impact, Arc arc,
                                        double height_delta_m = 0.0);
 [[nodiscard]] double sph2_mil_for_distance(double distance_m, Arc arc);

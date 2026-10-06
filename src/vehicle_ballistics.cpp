@@ -1,5 +1,7 @@
 #include "wardogs/vehicle_ballistics.hpp"
 
+#include "sph2_drag_model.hpp"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -161,40 +163,21 @@ double height_delta(Point base, Point point, const HeightLookup& lookup) {
 
 double trajectory_elevation(double horizontal_distance_m,
                             double height_delta_m, Arc arc) {
-    if (horizontal_distance_m <= 0.0)
-        throw std::invalid_argument("水平射程必须大于 0 m");
-    const double discriminant = sph2_maximum_range_m * sph2_maximum_range_m -
-        horizontal_distance_m * horizontal_distance_m -
-        2.0 * sph2_maximum_range_m * height_delta_m;
-    if (discriminant < -1e-7)
-        throw std::invalid_argument("目标超出弹道包线");
-    const double root = std::sqrt(std::max(0.0, discriminant));
-    const double numerator = arc == Arc::low ? sph2_maximum_range_m - root
-                                             : sph2_maximum_range_m + root;
-    const double tangent = numerator / horizontal_distance_m;
-    if (tangent <= 0.0 || !std::isfinite(tangent))
-        throw std::invalid_argument("所选弹道无法命中目标高差");
-    return std::atan(tangent);
-}
-
-double flat_range_for_elevation(double elevation, Arc arc) {
-    constexpr double tolerance = 1e-9;
-    const double boundary = std::numbers::pi / 4.0;
-    const bool valid = arc == Arc::low
-        ? elevation >= -tolerance && elevation <= boundary + tolerance
-        : elevation >= boundary - tolerance &&
-              elevation <= std::numbers::pi / 2.0 + tolerance;
-    if (!valid || !std::isfinite(elevation))
-        throw std::invalid_argument("平台姿态使所选弹道超出支持范围");
-    return std::clamp(
-        sph2_maximum_range_m * std::sin(2.0 * elevation), 0.0,
-        sph2_maximum_range_m);
-}
-
-double equivalent_flat_range(double horizontal_distance_m,
-                             double height_delta_m, Arc arc) {
-    return flat_range_for_elevation(
-        trajectory_elevation(horizontal_distance_m, height_delta_m, arc), arc);
+    if (horizontal_distance_m <= 0.0 ||
+        horizontal_distance_m > sph2_maximum_range_m)
+        throw std::invalid_argument("水平射程超出支持范围");
+    const double flat_mil =
+        sph2_world_mil_for_distance(horizontal_distance_m, arc);
+    const bool fitted_domain = horizontal_distance_m >= 780.0 &&
+        flat_mil >= (arc == Arc::low ? 20.0 : 610.0) &&
+        flat_mil <= (arc == Arc::low ? 600.0 : 1390.0);
+    if (fitted_domain)
+        return sph2_drag::solve(arc, horizontal_distance_m, flat_mil,
+                                height_delta_m)
+            .effective_elevation_rad;
+    if (std::abs(height_delta_m) < 1e-9) return flat_mil / 1000.0;
+    return sph2_drag::full_model_elevation(
+        arc, horizontal_distance_m, flat_mil, height_delta_m);
 }
 
 Vector3 direction_from_bearing_and_elevation(double bearing_deg,
@@ -294,9 +277,20 @@ Vector3 direction_from_bearing_and_mil(double bearing_deg, double mil) {
 }
 
 Vector3 firing_direction(double bearing_deg, double mil, Arc arc) {
-    const double equivalent_range = sph2_distance_for_mil(mil, arc);
+    const double flat_distance = sph2_distance_for_mil(mil, arc);
+    return firing_direction_for_reference(bearing_deg, mil, arc,
+                                          flat_distance);
+}
+
+Vector3 firing_direction_for_reference(
+    double bearing_deg, double mil, Arc arc,
+    double reference_horizontal_distance_m) {
+    const double flat_mil = sph2_world_mil_for_distance(
+        reference_horizontal_distance_m, arc);
+    const double reference_elevation = trajectory_elevation(
+        reference_horizontal_distance_m, 0.0, arc);
     return direction_from_bearing_and_elevation(
-        bearing_deg, trajectory_elevation(equivalent_range, 0.0, arc));
+        bearing_deg, reference_elevation + (mil - flat_mil) / 1000.0);
 }
 
 Vector3 impact_direction(Point base, Point impact, Arc arc,
@@ -348,16 +342,22 @@ double sph2_distance_for_mil(double mil, Arc arc) {
 double sph2_mil_for_trajectory(double horizontal_distance_m,
                                double height_delta_m, Arc arc,
                                bool extend_to_physical_endpoint) {
-    if (std::abs(height_delta_m) < 1e-9) {
-        return extend_to_physical_endpoint
-            ? sph2_world_mil_for_distance(horizontal_distance_m, arc)
-            : sph2_mil_for_distance(horizontal_distance_m, arc);
+    const double flat_mil = extend_to_physical_endpoint
+        ? sph2_world_mil_for_distance(horizontal_distance_m, arc)
+        : sph2_mil_for_distance(horizontal_distance_m, arc);
+    if (std::abs(height_delta_m) < 1e-9) return flat_mil;
+    if (horizontal_distance_m >= 780.0 &&
+        flat_mil >= (arc == Arc::low ? 20.0 : 610.0) &&
+        flat_mil <= (arc == Arc::low ? 600.0 : 1390.0)) {
+        return sph2_drag::solve(arc, horizontal_distance_m, flat_mil,
+                                height_delta_m)
+            .command_mil;
     }
-    const double equivalent =
-        equivalent_flat_range(horizontal_distance_m, height_delta_m, arc);
-    return extend_to_physical_endpoint
-        ? sph2_world_mil_for_distance(equivalent, arc)
-        : sph2_mil_for_distance(equivalent, arc);
+    const double reference = sph2_drag::full_model_elevation(
+        arc, horizontal_distance_m, flat_mil, 0.0);
+    const double desired = sph2_drag::full_model_elevation(
+        arc, horizontal_distance_m, flat_mil, height_delta_m);
+    return flat_mil + (desired - reference) * 1000.0;
 }
 
 PlatformCalibration calibrate_platform(Point base, const CalibrationShot& first,
@@ -458,8 +458,18 @@ FiringAngles required_firing_angles(Point base, Point point,
                                     const PlatformCalibration& calibration,
                                     Arc arc, double height_delta_m) {
     const auto geometry = shot_geometry(base, point, "落点不能与炮位重合");
-    const double desired_elevation = trajectory_elevation(
-        geometry.first, height_delta_m, arc);
+    const bool fitted_domain = geometry.first >= 780.0 &&
+        (arc == Arc::high || geometry.first >= low_table.front().first);
+    const double flat_mil = fitted_domain
+        ? sph2_mil_for_distance(geometry.first, arc)
+        : sph2_world_mil_for_distance(geometry.first, arc);
+    const auto trajectory = fitted_domain
+        ? std::optional{sph2_drag::solve(
+              arc, geometry.first, flat_mil, height_delta_m)}
+        : std::nullopt;
+    const double desired_elevation = trajectory
+        ? trajectory->effective_elevation_rad
+        : trajectory_elevation(geometry.first, height_delta_m, arc);
     const auto desired_world = direction_from_bearing_and_elevation(
         geometry.second, desired_elevation);
     const auto corrected = calibration.world_to_local(desired_world);
@@ -468,8 +478,12 @@ FiringAngles required_firing_angles(Point base, Point point,
     if (bearing < 0.0) bearing += 360.0;
     const double local_elevation =
         std::atan2(corrected[2], std::hypot(corrected[0], corrected[1]));
-    const double equivalent_range = flat_range_for_elevation(local_elevation, arc);
-    const double mil = sph2_world_mil_for_distance(equivalent_range, arc);
+    const double mil = (trajectory ? trajectory->command_mil : flat_mil) +
+        (local_elevation - desired_elevation) * 1000.0;
+    if (!std::isfinite(mil) ||
+        mil < (arc == Arc::low ? 0.0 : 610.0) ||
+        mil > (arc == Arc::low ? 600.0 : std::numbers::pi * 500.0))
+        throw std::invalid_argument("平台姿态使所选弹道超出支持范围");
     return {bearing, mil};
 }
 
