@@ -1424,13 +1424,25 @@ private:
             opacity_percent,
             wardogs::GhostReticlePreferences::minimum_opacity_percent,
             wardogs::GhostReticlePreferences::maximum_opacity_percent);
-        if (ghost_window_)
-            ghost_window_->set_opacity_percent(
-                settings_.ghost_reticle.opacity_percent);
+        apply_ghost_preferences(true);
+    }
+
+    // Single owner of ghost-reticle persistence: live previews and every
+    // commit path funnel through here, and only this function may save.
+    void apply_ghost_preferences(bool autosave) {
+        if (ghost_window_) {
+            ghost_window_->set_preferences(settings_.ghost_reticle);
+            ghost_window_->set_target_monitor(
+                settings_.capture_region
+                    ? settings_.capture_region->monitor_device
+                    : std::wstring{});
+        }
         if (pinned_window_)
             pinned_window_->set_ghost_opacity_percent(
                 settings_.ghost_reticle.opacity_percent);
-        try { wardogs::save_settings(settings_); } catch (...) {}
+        if (autosave) {
+            try { wardogs::save_settings(settings_); } catch (...) {}
+        }
     }
 
     void toggle_ghost_arc() {
@@ -1719,9 +1731,17 @@ private:
             set_status(QStringLiteral("OCR 正在执行，请稍候再修改设置"));
             return;
         }
-        SettingsDialog dialog(settings_, this);
+        SettingsDialog dialog(
+            settings_,
+            [this](const wardogs::GhostReticlePreferences& preferences) {
+                // Live preview only; never persists from inside the dialog.
+                if (ghost_window_)
+                    ghost_window_->set_preferences(preferences);
+            },
+            this);
         unregister_hotkeys();
         if (dialog.exec() != QDialog::Accepted) {
+            apply_ghost_preferences(false);
             try {
                 register_hotkeys(settings_);
             } catch (const std::exception& error) {
@@ -1736,18 +1756,9 @@ private:
             register_hotkeys(candidate);
             wardogs::save_settings(candidate);
             settings_ = candidate;
-            if (ghost_window_) {
-                ghost_window_->set_opacity_percent(
-                    settings_.ghost_reticle.opacity_percent);
-                ghost_window_->set_bearing_compensation(
-                    settings_.ghost_reticle.bearing_compensation_deg);
-                ghost_window_->set_width(settings_.ghost_reticle.width);
-                ghost_window_->set_target_monitor(
-                    settings_.capture_region
-                        ? settings_.capture_region->monitor_device
-                        : std::wstring{});
-                if (adjust_ghost) ghost_window_->begin_adjustment();
-            }
+            apply_ghost_preferences(false);
+            if (adjust_ghost && ghost_window_)
+                ghost_window_->begin_adjustment();
             if (pinned_window_)
                 pinned_window_->configure_ghost_controls(
                     ghost_enabled_, settings_.ghost_reticle.opacity_percent,
@@ -1759,6 +1770,7 @@ private:
             set_status(QStringLiteral("设置已保存并立即生效"));
         } catch (const std::exception& error) {
             try { register_hotkeys(previous); } catch (...) {}
+            apply_ghost_preferences(false);
             set_status(QStringLiteral("设置保存失败：") + error_text(error), true);
         }
     }

@@ -42,6 +42,10 @@ int main() {
     saved.ghost_reticle.width = 1120;
     saved.ghost_reticle.bearing_compensation_deg = -0.35;
     saved.ghost_reticle.preferred_arc = wardogs::Arc::high;
+    saved.ghost_reticle.color_preset = wardogs::GhostColorPreset::cyan;
+    saved.ghost_reticle.stroke_scale_percent = 175;
+    saved.ghost_reticle.scrim_level = 2;
+    saved.ghost_reticle.readability_enabled = true;
     saved.pinned_card.locked = true;
     saved.pinned_card.opacity_percent = 63;
     saved.pinned_card.unlock_hotkey = L"Ctrl+Shift+U";
@@ -61,6 +65,11 @@ int main() {
                   1e-9 &&
               loaded.ghost_reticle.preferred_arc == wardogs::Arc::high,
           "ghost reticle size, opacity, bearing offset, and trajectory persist");
+    check(loaded.ghost_reticle.color_preset == wardogs::GhostColorPreset::cyan &&
+              loaded.ghost_reticle.stroke_scale_percent == 175 &&
+              loaded.ghost_reticle.scrim_level == 2 &&
+              loaded.ghost_reticle.readability_enabled,
+          "ghost readability, color, stroke, and scrim survive the round trip");
     check(loaded.pinned_card.locked,
           "the pinned card lock state survives the explicit-path round trip");
     check(loaded.pinned_card.opacity_percent == 63,
@@ -111,11 +120,17 @@ int main() {
         std::wofstream invalid_ghost(path, std::ios::trunc);
         invalid_ghost << L"[settings]\n"
                          L"ghost_reticle_opacity_percent=1\n"
-                         L"ghost_reticle_width=12\n";
+                         L"ghost_reticle_width=12\n"
+                         L"ghost_reticle_stroke_scale_percent=1\n"
+                         L"ghost_reticle_scrim_level=9\n"
+                         L"ghost_reticle_color_preset=magenta\n";
     }
     const auto clamped_ghost = wardogs::load_settings_from(path).ghost_reticle;
-    check(clamped_ghost.opacity_percent == 20 && clamped_ghost.width == 480,
-          "invalid ghost opacity and size are clamped to usable minimums");
+    check(clamped_ghost.opacity_percent == 20 && clamped_ghost.width == 480 &&
+              clamped_ghost.stroke_scale_percent == 75 &&
+              clamped_ghost.scrim_level == 2 &&
+              clamped_ghost.color_preset == wardogs::GhostColorPreset::red,
+          "invalid ghost style values fall back to usable defaults");
 
     saved.capture_region.reset();
     wardogs::save_settings_to(path, saved);

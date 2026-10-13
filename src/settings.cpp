@@ -129,6 +129,24 @@ AppSettings load_settings_from(const std::filesystem::path& path) {
     settings.ghost_reticle.preferred_arc =
         read_value(path, L"ghost_reticle_preferred_arc", L"low") == L"high"
             ? Arc::high : Arc::low;
+    if (const auto stroke = read_integer(
+            path, L"ghost_reticle_stroke_scale_percent")) {
+        settings.ghost_reticle.stroke_scale_percent = static_cast<int>(std::clamp(
+            *stroke,
+            static_cast<long>(GhostReticlePreferences::minimum_stroke_scale_percent),
+            static_cast<long>(GhostReticlePreferences::maximum_stroke_scale_percent)));
+    }
+    if (const auto level = read_integer(path, L"ghost_reticle_scrim_level")) {
+        settings.ghost_reticle.scrim_level = static_cast<int>(std::clamp(
+            *level, static_cast<long>(GhostReticlePreferences::minimum_scrim_level),
+            static_cast<long>(GhostReticlePreferences::maximum_scrim_level)));
+    }
+    settings.ghost_reticle.readability_enabled =
+        read_value(path, L"ghost_reticle_readability", L"0") == L"1";
+    if (const auto preset = ghost_color_preset_from_name(
+            read_value(path, L"ghost_reticle_color_preset", L""))) {
+        settings.ghost_reticle.color_preset = *preset;
+    }
     const std::wstring monitor = read_value(path, L"capture_monitor", L"");
     const auto left = read_integer(path, L"capture_left");
     const auto top = read_integer(path, L"capture_top");
@@ -187,6 +205,20 @@ void save_settings_to(const std::filesystem::path& path,
     write_value(path, L"ghost_reticle_preferred_arc",
                 settings.ghost_reticle.preferred_arc == Arc::high
                     ? L"high" : L"low");
+    write_value(path, L"ghost_reticle_stroke_scale_percent",
+                std::to_wstring(std::clamp(
+                    settings.ghost_reticle.stroke_scale_percent,
+                    GhostReticlePreferences::minimum_stroke_scale_percent,
+                    GhostReticlePreferences::maximum_stroke_scale_percent)));
+    write_value(path, L"ghost_reticle_scrim_level",
+                std::to_wstring(std::clamp(
+                    settings.ghost_reticle.scrim_level,
+                    GhostReticlePreferences::minimum_scrim_level,
+                    GhostReticlePreferences::maximum_scrim_level)));
+    write_value(path, L"ghost_reticle_color_preset",
+                ghost_color_preset_name(settings.ghost_reticle.color_preset));
+    write_value(path, L"ghost_reticle_readability",
+                settings.ghost_reticle.readability_enabled ? L"1" : L"0");
     if (settings.capture_region) {
         const auto& region = *settings.capture_region;
         write_value(path, L"capture_monitor", region.monitor_device);

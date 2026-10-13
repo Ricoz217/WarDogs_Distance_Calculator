@@ -4,6 +4,7 @@
 
 #include <QDialog>
 
+#include <functional>
 #include <optional>
 
 class QComboBox;
@@ -15,7 +16,11 @@ class QPushButton;
 
 class SettingsDialog final : public QDialog {
 public:
+    using GhostPreview =
+        std::function<void(const wardogs::GhostReticlePreferences&)>;
+
     explicit SettingsDialog(const wardogs::AppSettings& settings,
+                            GhostPreview ghost_preview = {},
                             QWidget* parent = nullptr);
 
     [[nodiscard]] wardogs::AppSettings settings() const;
@@ -34,6 +39,7 @@ private:
     static std::wstring hotkey_text(const QKeySequenceEdit* editor);
     void accept_if_valid();
     void request_ghost_adjustment();
+    void notify_ghost_preview();
 
     QComboBox* backend_{};
     QKeySequenceEdit* region_key_{};
@@ -43,10 +49,15 @@ private:
     QKeySequenceEdit* impact_key_{};
     QKeySequenceEdit* ghost_arc_key_{};
     QComboBox* ghost_preset_{};
+    QComboBox* ghost_readability_{};
+    QComboBox* ghost_color_{};
+    QComboBox* ghost_stroke_{};
+    QComboBox* ghost_scrim_{};
     QDoubleSpinBox* ghost_bearing_compensation_{};
     QPlainTextEdit* pattern_{};
     std::optional<wardogs::CaptureRegion> capture_region_;
     wardogs::PinnedCardPreferences pinned_card_;
     wardogs::GhostReticlePreferences ghost_reticle_;
+    GhostPreview ghost_preview_;
     bool adjust_ghost_requested_{};
 };

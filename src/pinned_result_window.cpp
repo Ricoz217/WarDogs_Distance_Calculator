@@ -2,6 +2,7 @@
 
 #include "app_icon.hpp"
 #include "vehicle_solution_widget.hpp"
+#include "wardogs/ghost_reticle.hpp"
 #include "wardogs/hotkeys.hpp"
 
 #include <Windows.h>
@@ -311,7 +312,9 @@ void PinnedResultWindow::build_context_menu() {
     ghost_opacity_slider_->setObjectName(
         QStringLiteral("ghostReticleOpacitySlider"));
     ghost_opacity_slider_->setProperty("pinnedMenuSlider", true);
-    ghost_opacity_slider_->setRange(20, 100);
+    ghost_opacity_slider_->setRange(
+        wardogs::GhostReticlePreferences::minimum_opacity_percent,
+        wardogs::GhostReticlePreferences::maximum_opacity_percent);
     ghost_opacity_slider_->setValue(ghost_opacity_percent_);
     ghost_opacity_slider_->setMinimumWidth(150);
     ghost_opacity_slider_->setAccessibleName(QStringLiteral("幽灵分划透明度"));
@@ -352,7 +355,10 @@ void PinnedResultWindow::build_context_menu() {
             });
     connect(ghost_opacity_slider_, &QSlider::valueChanged,
             this, [this](int value) {
-                ghost_opacity_percent_ = std::clamp(value, 20, 100);
+                ghost_opacity_percent_ = std::clamp(
+                    value,
+                    wardogs::GhostReticlePreferences::minimum_opacity_percent,
+                    wardogs::GhostReticlePreferences::maximum_opacity_percent);
                 ghost_opacity_slider_->setToolTip(
                     QStringLiteral("幽灵分划透明度：%1%")
                         .arg(ghost_opacity_percent_));
@@ -410,7 +416,10 @@ void PinnedResultWindow::set_ghost_enabled(bool enabled) {
 }
 
 void PinnedResultWindow::set_ghost_opacity_percent(int opacity_percent) {
-    ghost_opacity_percent_ = std::clamp(opacity_percent, 20, 100);
+    ghost_opacity_percent_ = std::clamp(
+        opacity_percent,
+        wardogs::GhostReticlePreferences::minimum_opacity_percent,
+        wardogs::GhostReticlePreferences::maximum_opacity_percent);
     if (!ghost_opacity_slider_) return;
     const QSignalBlocker blocker(ghost_opacity_slider_);
     ghost_opacity_slider_->setValue(ghost_opacity_percent_);
