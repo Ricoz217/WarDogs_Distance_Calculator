@@ -31,9 +31,7 @@ public:
                              std::optional<double> mil);
     void set_overlay_enabled(bool enabled);
     [[nodiscard]] bool overlay_enabled() const { return overlay_enabled_; }
-    void set_opacity_percent(int opacity_percent);
-    void set_bearing_compensation(double degrees);
-    void set_width(int width);
+    void set_preferences(const Preferences& preferences);
     void set_target_monitor(const std::wstring& monitor_device);
     void begin_adjustment();
     [[nodiscard]] bool adjusting() const { return adjusting_; }
@@ -49,15 +47,19 @@ protected:
     void leaveEvent(QEvent* event) override;
 
 private:
+    static Preferences clamped(Preferences preferences);
     void finish_adjustment(bool save);
     void center_on_screen(int width);
+    void apply_adjustment_controls_style();
     [[nodiscard]] QScreen* target_screen() const;
     void apply_input_mode();
     [[nodiscard]] Qt::CursorShape resize_cursor_at(QPoint position) const;
-    void draw_bearing(QPainter& painter, double scale,
-                      double bearing_degrees) const;
-    void draw_mil(QPainter& painter, double scale) const;
-    void draw_mortar_mil(QPainter& painter, double scale) const;
+    void draw_bearing(QPainter& painter, const wardogs::GhostStyle& style,
+                      double scale, double bearing_degrees) const;
+    void draw_mil(QPainter& painter, const wardogs::GhostStyle& style,
+                  double scale) const;
+    void draw_mortar_mil(QPainter& painter, const wardogs::GhostStyle& style,
+                         double scale) const;
     [[nodiscard]] bool has_reticle_result() const;
 
     Preferences preferences_;

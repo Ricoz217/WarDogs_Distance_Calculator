@@ -10,16 +10,20 @@
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QKeySequenceEdit>
 #include <QLabel>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <array>
 #include <exception>
 #include <regex>
+#include <utility>
 
 namespace {
 
@@ -31,13 +35,14 @@ QString error_text(const std::exception& error) {
 }  // namespace
 
 SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
-                               QWidget* parent)
+                               GhostPreview ghost_preview, QWidget* parent)
     : QDialog(parent), capture_region_(settings.capture_region),
-      pinned_card_(settings.pinned_card), ghost_reticle_(settings.ghost_reticle) {
+      pinned_card_(settings.pinned_card), ghost_reticle_(settings.ghost_reticle),
+      ghost_preview_(std::move(ghost_preview)) {
     configure_frameless_window(this);
     setWindowTitle(QStringLiteral("设置 · War Dogs 射表计算"));
     setModal(true);
-    resize(720, 580);
+    resize(720, 620);
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
     outer->setSpacing(0);
@@ -169,6 +174,84 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
         QStringLiteral("进入屏幕居中的 4:3 分划边框调整模式"));
     ghost_layout->addWidget(adjust_ghost);
     form->addRow(QStringLiteral("幽灵分划"), ghost_row);
+
+    auto* readability_row = new QWidget;
+    auto* readability_layout = new QHBoxLayout(readability_row);
+    readability_layout->setContentsMargins(0, 0, 0, 0);
+    readability_layout->setSpacing(10);
+    ghost_readability_ = new QComboBox;
+    ghost_readability_->setObjectName(QStringLiteral("ghostReadability"));
+    ghost_readability_->addItem(QStringLiteral("关闭"), 0);
+    ghost_readability_->addItem(QStringLiteral("开启"), 1);
+    ghost_readability_->setCurrentIndex(
+        settings.ghost_reticle.readability_enabled ? 1 : 0);
+    ghost_readability_->setToolTip(
+        QStringLiteral("开启后为分划增加深色描边、中心标记与实时读数"));
+    readability_layout->addWidget(ghost_readability_, 1);
+
+    ghost_color_ = new QComboBox;
+    ghost_color_->setObjectName(QStringLiteral("ghostColorPreset"));
+    ghost_color_->setToolTip(QStringLiteral("分划主色；色块用于进游戏前判断"));
+    struct ColorOption {
+        wardogs::GhostColorPreset preset;
+        QString label;
+    };
+    const std::array<ColorOption, 5> color_options{{
+        {wardogs::GhostColorPreset::red, QStringLiteral("红")},
+        {wardogs::GhostColorPreset::green, QStringLiteral("绿")},
+        {wardogs::GhostColorPreset::cyan, QStringLiteral("青")},
+        {wardogs::GhostColorPreset::yellow, QStringLiteral("黄")},
+        {wardogs::GhostColorPreset::white, QStringLiteral("白")},
+    }};
+    for (const auto& option : color_options) {
+        const auto rgb = wardogs::ghost_color_rgb(option.preset);
+        QPixmap swatch(14, 14);
+        swatch.fill(QColor(rgb[0], rgb[1], rgb[2]));
+        ghost_color_->addItem(QIcon(swatch), option.label,
+                              static_cast<int>(option.preset));
+        if (option.preset == settings.ghost_reticle.color_preset)
+            ghost_color_->setCurrentIndex(ghost_color_->count() - 1);
+    }
+    readability_layout->addWidget(ghost_color_, 1);
+
+    ghost_stroke_ = new QComboBox;
+    ghost_stroke_->setObjectName(QStringLiteral("ghostStrokeScale"));
+    for (int percent = wardogs::GhostReticlePreferences::minimum_stroke_scale_percent;
+         percent <=
+         wardogs::GhostReticlePreferences::maximum_stroke_scale_percent;
+         percent +=
+         wardogs::GhostReticlePreferences::stroke_scale_step_percent) {
+        QString label = QStringLiteral("%1%").arg(percent);
+        if (percent == 75) label = QStringLiteral("细（75%）");
+        if (percent == 100) label = QStringLiteral("标准（100%）");
+        if (percent == 225) label = QStringLiteral("特粗（225%）");
+        ghost_stroke_->addItem(label, percent);
+        if (percent == settings.ghost_reticle.stroke_scale_percent)
+            ghost_stroke_->setCurrentIndex(ghost_stroke_->count() - 1);
+    }
+    ghost_stroke_->setToolTip(
+        QStringLiteral("线宽倍率：越粗越能压住高频纹理，过粗会互相粘连"));
+    readability_layout->addWidget(ghost_stroke_, 1);
+
+    ghost_scrim_ = new QComboBox;
+    ghost_scrim_->setObjectName(QStringLiteral("ghostScrimLevel"));
+    ghost_scrim_->addItem(QStringLiteral("关闭"), 0);
+    ghost_scrim_->addItem(QStringLiteral("微弱"), 1);
+    ghost_scrim_->addItem(QStringLiteral("明显"), 2);
+    ghost_scrim_->setCurrentIndex(std::clamp(
+        settings.ghost_reticle.scrim_level,
+        wardogs::GhostReticlePreferences::minimum_scrim_level,
+        wardogs::GhostReticlePreferences::maximum_scrim_level));
+    ghost_scrim_->setToolTip(
+        QStringLiteral("在文字后垫深色底板，明显档再给刻度线加窄带"));
+    readability_layout->addWidget(ghost_scrim_, 1);
+    form->addRow(QStringLiteral("可读性辅助"), readability_row);
+    for (auto* combo :
+         {ghost_readability_, ghost_color_, ghost_stroke_, ghost_scrim_}) {
+        connect(combo, qOverload<int>(&QComboBox::currentIndexChanged),
+                this, [this](int) { notify_ghost_preview(); });
+    }
+
     connect(adjust_ghost, &QPushButton::clicked,
             this, &SettingsDialog::request_ghost_adjustment);
     connect(decrease_compensation, &QPushButton::clicked, this, [this] {
@@ -181,6 +264,9 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
             ghost_bearing_compensation_->value() +
             wardogs::GhostReticlePreferences::bearing_compensation_step_deg);
     });
+    connect(ghost_bearing_compensation_,
+            qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+            [this](double) { notify_ghost_preview(); });
     connect(ghost_preset_, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this](int) {
                 const QSize preset = ghost_preset_->currentData().toSize();
@@ -190,6 +276,7 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
                     ghost_reticle_.preset_screen_height = preset.height();
                     ghost_reticle_.width = *width;
                 }
+                notify_ghost_preview();
             });
 
     pattern_ = new QPlainTextEdit(qtext(settings.coordinate_pattern));
@@ -241,6 +328,13 @@ wardogs::AppSettings SettingsDialog::settings() const {
     value.ghost_reticle = ghost_reticle_;
     value.ghost_reticle.bearing_compensation_deg =
         ghost_bearing_compensation_->value();
+    value.ghost_reticle.readability_enabled =
+        ghost_readability_->currentData().toInt() == 1;
+    value.ghost_reticle.color_preset = static_cast<wardogs::GhostColorPreset>(
+        ghost_color_->currentData().toInt());
+    value.ghost_reticle.stroke_scale_percent =
+        ghost_stroke_->currentData().toInt();
+    value.ghost_reticle.scrim_level = ghost_scrim_->currentData().toInt();
     if (ghost_preset_->currentData().canConvert<QSize>()) {
         const QSize preset = ghost_preset_->currentData().toSize();
         value.ghost_reticle.preset_screen_width = preset.width();
@@ -300,4 +394,10 @@ void SettingsDialog::request_ghost_adjustment() {
     adjust_ghost_requested_ = true;
     accept_if_valid();
     if (result() != QDialog::Accepted) adjust_ghost_requested_ = false;
+}
+
+// Preview only: the dialog never persists anything, MainWindow owns saving.
+void SettingsDialog::notify_ghost_preview() {
+    if (!ghost_preview_) return;
+    ghost_preview_(settings().ghost_reticle);
 }
