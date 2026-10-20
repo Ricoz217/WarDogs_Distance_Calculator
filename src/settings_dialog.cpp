@@ -5,24 +5,34 @@
 
 #include <QComboBox>
 #include <QApplication>
-#include <QCheckBox>
 #include <QColor>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QKeySequenceEdit>
 #include <QLabel>
+#include <QLineEdit>
+#include <QLinearGradient>
 #include <QMessageBox>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QPlainTextEdit>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QRegularExpressionValidator>
 #include <QSlider>
+#include <QStyle>
 #include <QVBoxLayout>
+#include <QWidget>
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <exception>
+#include <functional>
 #include <regex>
 #include <utility>
 
@@ -38,6 +48,160 @@ QString hsl_color_css(int hue, int saturation, int lightness) {
                            qRound(lightness * 2.55)).name();
 }
 
+constexpr std::array<int, 5> ghost_line_width_stops{15, 20, 27, 35, 45};
+constexpr std::array<int, 5> ghost_outline_width_stops{5, 10, 16, 25, 35};
+
+template <std::size_t Size>
+int closest_stop(const std::array<int, Size>& stops, int value) {
+    int closest = 0;
+    for (int index = 1; index < static_cast<int>(Size); ++index) {
+        if (std::abs(stops[index] - value) <
+            std::abs(stops[closest] - value)) closest = index;
+    }
+    return closest;
+}
+
+QString pixel_width_text(int tenths) {
+    return QStringLiteral("%1 px").arg(tenths / 10.0, 0, 'f', 1);
+}
+
+class HslPlane final : public QWidget {
+public:
+    explicit HslPlane(QWidget* parent = nullptr) : QWidget(parent) {
+        setMinimumSize(360, 220);
+        setCursor(Qt::CrossCursor);
+    }
+
+    void set_color(int hue, int saturation, int lightness) {
+        hue = std::clamp(hue, 0, 359);
+        saturation_ = std::clamp(saturation, 0, 100);
+        lightness_ = std::clamp(lightness, 0, 100);
+        if (hue_ != hue) {
+            hue_ = hue;
+            image_ = {};
+        }
+        update();
+    }
+
+    void set_change_handler(std::function<void(int, int)> handler) {
+        changed_ = std::move(handler);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        if (image_.size() != size()) {
+            image_ = QImage(size(), QImage::Format_RGB32);
+            for (int y = 0; y < image_.height(); ++y) {
+                const int lightness = qRound(
+                    100.0 * (image_.height() - 1 - y) /
+                    std::max(1, image_.height() - 1));
+                for (int x = 0; x < image_.width(); ++x) {
+                    const int saturation = qRound(
+                        100.0 * x / std::max(1, image_.width() - 1));
+                    image_.setPixel(x, y,
+                        QColor::fromHsl(hue_, qRound(saturation * 2.55),
+                                        qRound(lightness * 2.55)).rgb());
+                }
+            }
+        }
+        QPainter painter(this);
+        painter.drawImage(rect(), image_);
+        const QPointF marker(
+            saturation_ * (width() - 1) / 100.0,
+            (100 - lightness_) * (height() - 1) / 100.0);
+        painter.setBrush(Qt::NoBrush);
+        painter.setPen(QPen(Qt::black, 3));
+        painter.drawEllipse(marker, 7, 7);
+        painter.setPen(QPen(Qt::white, 1.5));
+        painter.drawEllipse(marker, 7, 7);
+    }
+
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton) update_from(event->position());
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override {
+        if (event->buttons().testFlag(Qt::LeftButton))
+            update_from(event->position());
+    }
+
+private:
+    void update_from(QPointF position) {
+        saturation_ = qRound(100.0 * std::clamp(
+                                                position.x(), 0.0,
+                                                static_cast<double>(qMax(0, width() - 1))) /
+                             std::max(1, width() - 1));
+        lightness_ = 100 - qRound(
+            100.0 * std::clamp(
+                        position.y(), 0.0,
+                        static_cast<double>(qMax(0, height() - 1))) /
+            std::max(1, height() - 1));
+        update();
+        if (changed_) changed_(saturation_, lightness_);
+    }
+
+    int hue_{};
+    int saturation_{};
+    int lightness_{50};
+    QImage image_;
+    std::function<void(int, int)> changed_;
+};
+
+class HueBar final : public QWidget {
+public:
+    explicit HueBar(QWidget* parent = nullptr) : QWidget(parent) {
+        setFixedWidth(28);
+        setMinimumHeight(220);
+        setCursor(Qt::PointingHandCursor);
+    }
+
+    void set_hue(int hue) {
+        hue_ = std::clamp(hue, 0, 359);
+        update();
+    }
+
+    void set_change_handler(std::function<void(int)> handler) {
+        changed_ = std::move(handler);
+    }
+
+protected:
+    void paintEvent(QPaintEvent*) override {
+        QPainter painter(this);
+        QLinearGradient gradient(0, 0, 0, height());
+        for (int index = 0; index <= 6; ++index)
+            gradient.setColorAt(index / 6.0,
+                                QColor::fromHsl((index * 60) % 360, 255, 128));
+        painter.fillRect(rect(), gradient);
+        const double y = hue_ * (height() - 1) / 359.0;
+        painter.setPen(QPen(Qt::black, 3));
+        painter.drawLine(0, qRound(y), width() - 1, qRound(y));
+        painter.setPen(QPen(Qt::white, 1));
+        painter.drawLine(0, qRound(y), width() - 1, qRound(y));
+    }
+
+    void mousePressEvent(QMouseEvent* event) override {
+        if (event->button() == Qt::LeftButton) update_from(event->position().y());
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override {
+        if (event->buttons().testFlag(Qt::LeftButton))
+            update_from(event->position().y());
+    }
+
+private:
+    void update_from(double y) {
+        hue_ = qRound(359.0 * std::clamp(
+                          y, 0.0,
+                          static_cast<double>(qMax(0, height() - 1))) /
+                      std::max(1, height() - 1));
+        update();
+        if (changed_) changed_(hue_);
+    }
+
+    int hue_{};
+    std::function<void(int)> changed_;
+};
+
 class HslColorDialog final : public QDialog {
 public:
     HslColorDialog(int hue, int saturation, int lightness, QWidget* parent)
@@ -45,41 +209,55 @@ public:
           lightness_(lightness) {
         setWindowTitle(QStringLiteral("幽灵分划颜色"));
         setModal(true);
-        resize(560, 340);
+        resize(500, 390);
         auto* root = new QVBoxLayout(this);
         root->setContentsMargins(18, 18, 18, 18);
         root->setSpacing(12);
-        preview_ = new QLabel;
-        preview_->setFixedHeight(54);
-        preview_->setAlignment(Qt::AlignCenter);
-        root->addWidget(preview_);
 
-        hue_slider_ = add_channel(root, QStringLiteral("色相 H"), 0, 359, hue_);
-        saturation_slider_ = add_channel(root, QStringLiteral("饱和度 S"), 0, 100,
-                                         saturation_);
-        lightness_slider_ = add_channel(root, QStringLiteral("亮度 L"), 0, 100,
-                                        lightness_);
+        auto* picker = new QHBoxLayout;
+        picker->setSpacing(10);
+        plane_ = new HslPlane;
+        hue_bar_ = new HueBar;
+        picker->addWidget(plane_, 1);
+        picker->addWidget(hue_bar_);
+        root->addLayout(picker, 1);
+
+        auto* hex_row = new QHBoxLayout;
+        hex_row->addWidget(new QLabel(QStringLiteral("十六进制")));
+        hex_edit_ = new QLineEdit;
+        hex_edit_->setObjectName(QStringLiteral("ghostColorHex"));
+        hex_edit_->setMaxLength(7);
+        hex_edit_->setValidator(new QRegularExpressionValidator(
+            QRegularExpression(QStringLiteral("^#[0-9A-Fa-f]{6}$")),
+            hex_edit_));
+        hex_row->addWidget(hex_edit_, 1);
+        root->addLayout(hex_row);
 
         auto* presets = new QHBoxLayout;
-        presets->setSpacing(8);
-        struct Preset { const char* name; int h; int s; int l; };
+        presets->setSpacing(7);
+        struct Preset { const char* tooltip; int h; int s; int l; };
         const std::array<Preset, 5> values{{
             {"红", 3, 100, 59}, {"绿", 145, 100, 39},
             {"青", 187, 100, 42}, {"黄", 50, 100, 50},
             {"白", 0, 0, 100},
         }};
         for (const auto& preset : values) {
-            auto* button = new QPushButton(QString::fromUtf8(preset.name));
+            auto* button = new QPushButton;
+            button->setFixedSize(30, 30);
+            button->setToolTip(QStringLiteral("%1色预设")
+                                   .arg(QString::fromUtf8(preset.tooltip)));
             button->setStyleSheet(
-                QStringLiteral("QPushButton{border-left:12px solid %1;}")
+                QStringLiteral(
+                    "QPushButton{background:%1;border:1px solid #64748b;"
+                    "border-radius:4px;padding:0;min-height:0;}"
+                    "QPushButton:hover{border:2px solid #f8fafc;}")
                     .arg(hsl_color_css(preset.h, preset.s, preset.l)));
             connect(button, &QPushButton::clicked, this, [this, preset] {
-                hue_slider_->setValue(preset.h);
-                saturation_slider_->setValue(preset.s);
-                lightness_slider_->setValue(preset.l);
+                set_hsl(preset.h, preset.s, preset.l);
             });
             presets->addWidget(button);
         }
+        presets->addStretch();
         root->addLayout(presets);
 
         auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok |
@@ -89,96 +267,62 @@ public:
         connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
         connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
         root->addWidget(buttons);
-        update_preview();
+
+        plane_->set_change_handler([this](int saturation, int lightness) {
+            saturation_ = saturation;
+            lightness_ = lightness;
+            sync_hex();
+        });
+        hue_bar_->set_change_handler([this](int hue) {
+            hue_ = hue;
+            plane_->set_color(hue_, saturation_, lightness_);
+            sync_hex();
+        });
+        connect(hex_edit_, &QLineEdit::editingFinished,
+                this, [this] { apply_hex(); });
+        set_hsl(hue_, saturation_, lightness_);
     }
 
-    [[nodiscard]] int hue() const { return hue_slider_->value(); }
-    [[nodiscard]] int saturation() const { return saturation_slider_->value(); }
-    [[nodiscard]] int lightness() const { return lightness_slider_->value(); }
+    [[nodiscard]] int hue() const { return hue_; }
+    [[nodiscard]] int saturation() const { return saturation_; }
+    [[nodiscard]] int lightness() const { return lightness_; }
 
 private:
-    QSlider* add_channel(QVBoxLayout* root, const QString& label,
-                         int minimum, int maximum, int value) {
-        auto* row = new QHBoxLayout;
-        auto* caption = new QLabel(label);
-        caption->setFixedWidth(62);
-        auto* slider = new QSlider(Qt::Horizontal);
-        slider->setRange(minimum, maximum);
-        slider->setValue(value);
-        slider->setTickPosition(QSlider::TicksBelow);
-        slider->setTickInterval(maximum == 359 ? 30 : 10);
-        auto* number = new QLabel;
-        number->setFixedWidth(38);
-        number->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-        number->setText(QString::number(value));
-        connect(slider, &QSlider::valueChanged, this,
-                [this, number](int changed) {
-                    number->setText(QString::number(changed));
-                    update_preview();
-                });
-        row->addWidget(caption);
-        row->addWidget(slider, 1);
-        row->addWidget(number);
-        root->addLayout(row);
-        return slider;
+    void set_hsl(int hue, int saturation, int lightness) {
+        hue_ = std::clamp(hue, 0, 359);
+        saturation_ = std::clamp(saturation, 0, 100);
+        lightness_ = std::clamp(lightness, 0, 100);
+        plane_->set_color(hue_, saturation_, lightness_);
+        hue_bar_->set_hue(hue_);
+        sync_hex();
     }
 
-    void update_preview() {
-        if (!preview_ || !hue_slider_ || !saturation_slider_ ||
-            !lightness_slider_) return;
-        const auto color = hsl_color_css(hue_slider_->value(),
-                                         saturation_slider_->value(),
-                                         lightness_slider_->value());
-        preview_->setText(QStringLiteral("H %1  ·  S %2  ·  L %3")
-                              .arg(hue_slider_->value())
-                              .arg(saturation_slider_->value())
-                              .arg(lightness_slider_->value()));
-        preview_->setStyleSheet(
-            QStringLiteral("background:%1;color:%2;border-radius:7px;"
-                           "font-weight:700;")
-                .arg(color,
-                     lightness_slider_->value() > 65
-                         ? QStringLiteral("#0b1018")
-                         : QStringLiteral("#f8fafc")));
+    void sync_hex() {
+        hex_edit_->setText(hsl_color_css(hue_, saturation_, lightness_)
+                               .toUpper());
+    }
 
-        const auto slider_style = [](const QString& gradient) {
-            return QStringLiteral(
-                "QSlider::groove:horizontal{height:8px;border-radius:4px;"
-                "background:%1;}"
-                "QSlider::handle:horizontal{background:#f8fafc;"
-                "border:1px solid #64748b;width:15px;margin:-5px 0;"
-                "border-radius:7px;}"
-                "QSlider::handle:horizontal:hover{border-color:#38bdf8;}")
-                .arg(gradient);
-        };
-        hue_slider_->setStyleSheet(slider_style(QStringLiteral(
-            "qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-            "stop:0 #ff0000,stop:0.167 #ffff00,stop:0.333 #00ff00,"
-            "stop:0.5 #00ffff,stop:0.667 #0000ff,stop:0.833 #ff00ff,"
-            "stop:1 #ff0000)")));
-        const auto gray = hsl_color_css(hue_slider_->value(), 0,
-                                        lightness_slider_->value());
-        const auto saturated = hsl_color_css(hue_slider_->value(), 100,
-                                             lightness_slider_->value());
-        saturation_slider_->setStyleSheet(slider_style(
-            QStringLiteral("qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-                           "stop:0 %1,stop:1 %2)")
-                .arg(gray, saturated)));
-        const auto middle = hsl_color_css(hue_slider_->value(),
-                                          saturation_slider_->value(), 50);
-        lightness_slider_->setStyleSheet(slider_style(
-            QStringLiteral("qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-                           "stop:0 #000000,stop:0.5 %1,stop:1 #ffffff)")
-                .arg(middle)));
+    void apply_hex() {
+        const QColor color(hex_edit_->text());
+        if (!color.isValid()) {
+            sync_hex();
+            return;
+        }
+        int hue = 0;
+        int saturation = 0;
+        int lightness = 0;
+        color.getHsl(&hue, &saturation, &lightness);
+        set_hsl(hue < 0 ? hue_ : hue,
+                qRound(saturation * 100.0 / 255.0),
+                qRound(lightness * 100.0 / 255.0));
     }
 
     int hue_{};
     int saturation_{};
     int lightness_{};
-    QLabel* preview_{};
-    QSlider* hue_slider_{};
-    QSlider* saturation_slider_{};
-    QSlider* lightness_slider_{};
+    HslPlane* plane_{};
+    HueBar* hue_bar_{};
+    QLineEdit* hex_edit_{};
 };
 
 }  // namespace
@@ -328,42 +472,43 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
     auto* style_layout = new QHBoxLayout(style_row);
     style_layout->setContentsMargins(0, 0, 0, 0);
     style_layout->setSpacing(8);
-    ghost_outline_ = new QCheckBox(QStringLiteral("描边"));
+    ghost_outline_ = new QPushButton(QStringLiteral("描边"));
     ghost_outline_->setObjectName(QStringLiteral("ghostOutlineEnabled"));
+    ghost_outline_->setCheckable(true);
     ghost_outline_->setChecked(settings.ghost_reticle.outline_enabled);
+    ghost_outline_->setProperty("highlighted",
+                                settings.ghost_reticle.outline_enabled);
     style_layout->addWidget(ghost_outline_);
 
     const auto add_width = [style_layout](const QString& caption,
                                           const QString& object_name,
-                                          int minimum, int maximum, int value,
-                                          QSlider*& slider, QLabel*& label) {
+                                          const std::array<int, 5>& stops,
+                                          int value, QSlider*& slider,
+                                          QLabel*& label) {
         auto* title = new QLabel(caption);
         title->setObjectName(QStringLiteral("muted"));
         style_layout->addWidget(title);
         slider = new QSlider(Qt::Horizontal);
         slider->setObjectName(object_name);
         slider->setProperty("pinnedMenuSlider", true);
-        slider->setRange(minimum, maximum);
-        slider->setValue(value);
+        slider->setRange(0, static_cast<int>(stops.size()) - 1);
+        slider->setValue(closest_stop(stops, value));
         slider->setSingleStep(1);
-        slider->setPageStep(5);
-        slider->setTickInterval(5);
+        slider->setPageStep(1);
+        slider->setTickInterval(1);
         slider->setTickPosition(QSlider::TicksBelow);
         slider->setMinimumWidth(92);
         style_layout->addWidget(slider, 1);
-        label = new QLabel(QStringLiteral("%1 px").arg(value / 10.0, 0, 'f', 1));
+        label = new QLabel(pixel_width_text(stops.at(slider->value())));
         label->setMinimumWidth(43);
         label->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
         style_layout->addWidget(label);
     };
     add_width(QStringLiteral("线宽"), QStringLiteral("ghostLineWidth"),
-              wardogs::GhostReticlePreferences::minimum_line_width_tenths,
-              wardogs::GhostReticlePreferences::maximum_line_width_tenths,
-              settings.ghost_reticle.line_width_tenths,
+              ghost_line_width_stops, settings.ghost_reticle.line_width_tenths,
               ghost_line_width_, ghost_line_width_value_);
     add_width(QStringLiteral("描边线框"), QStringLiteral("ghostOutlineWidth"),
-              wardogs::GhostReticlePreferences::minimum_outline_width_tenths,
-              wardogs::GhostReticlePreferences::maximum_outline_width_tenths,
+              ghost_outline_width_stops,
               settings.ghost_reticle.outline_width_tenths,
               ghost_outline_width_, ghost_outline_width_value_);
     ghost_color_button_ = new QPushButton(QStringLiteral("颜色"));
@@ -373,16 +518,21 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
     form->addRow(QStringLiteral("分划样式"), style_row);
     refresh_ghost_color_button();
 
-    connect(ghost_outline_, &QCheckBox::toggled,
-            this, [this](bool) { notify_ghost_preview(); });
-    connect(ghost_line_width_, &QSlider::valueChanged, this, [this](int value) {
-        ghost_line_width_value_->setText(
-            QStringLiteral("%1 px").arg(value / 10.0, 0, 'f', 1));
+    connect(ghost_outline_, &QPushButton::toggled,
+            this, [this](bool checked) {
+                ghost_outline_->setProperty("highlighted", checked);
+                ghost_outline_->style()->unpolish(ghost_outline_);
+                ghost_outline_->style()->polish(ghost_outline_);
+                notify_ghost_preview();
+            });
+    connect(ghost_line_width_, &QSlider::valueChanged, this, [this](int stop) {
+        ghost_line_width_value_->setText(pixel_width_text(
+            ghost_line_width_stops.at(stop)));
         notify_ghost_preview();
     });
-    connect(ghost_outline_width_, &QSlider::valueChanged, this, [this](int value) {
-        ghost_outline_width_value_->setText(
-            QStringLiteral("%1 px").arg(value / 10.0, 0, 'f', 1));
+    connect(ghost_outline_width_, &QSlider::valueChanged, this, [this](int stop) {
+        ghost_outline_width_value_->setText(pixel_width_text(
+            ghost_outline_width_stops.at(stop)));
         notify_ghost_preview();
     });
     connect(ghost_color_button_, &QPushButton::clicked,
@@ -465,9 +615,10 @@ wardogs::AppSettings SettingsDialog::settings() const {
     value.ghost_reticle.bearing_compensation_deg =
         ghost_bearing_compensation_->value();
     value.ghost_reticle.outline_enabled = ghost_outline_->isChecked();
-    value.ghost_reticle.line_width_tenths = ghost_line_width_->value();
+    value.ghost_reticle.line_width_tenths =
+        ghost_line_width_stops.at(ghost_line_width_->value());
     value.ghost_reticle.outline_width_tenths =
-        ghost_outline_width_->value();
+        ghost_outline_width_stops.at(ghost_outline_width_->value());
     if (ghost_preset_->currentData().canConvert<QSize>()) {
         const QSize preset = ghost_preset_->currentData().toSize();
         value.ghost_reticle.preset_screen_width = preset.width();
@@ -552,7 +703,11 @@ void SettingsDialog::refresh_ghost_color_button() {
     const auto color = hsl_color_css(ghost_reticle_.color_hue,
                                      ghost_reticle_.color_saturation,
                                      ghost_reticle_.color_lightness);
-    ghost_color_button_->setText(QStringLiteral("颜色  %1").arg(color.toUpper()));
+    ghost_color_button_->setText(QStringLiteral("颜色"));
     ghost_color_button_->setStyleSheet(
-        QStringLiteral("QPushButton{border-left:14px solid %1;}").arg(color));
+        QStringLiteral(
+            "QPushButton{border:2px solid %1;border-radius:8px;}"
+            "QPushButton:hover{border:2px solid %1;background:#23344a;}"
+            "QPushButton:pressed{border:2px solid %1;background:#182f55;}")
+            .arg(color));
 }

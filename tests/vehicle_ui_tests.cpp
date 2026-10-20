@@ -10,7 +10,6 @@
 #include <QApplication>
 #include <QContextMenuEvent>
 #include <QComboBox>
-#include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QHoverEvent>
 #include <QImage>
@@ -99,7 +98,7 @@ int main(int argc, char* argv[]) {
                        .ghost_reticle.bearing_compensation_deg +
                    0.35) < 1e-9,
           "manually entered bearing compensation is returned by settings");
-    auto* ghost_outline = settings_dialog.findChild<QCheckBox*>(
+    auto* ghost_outline = settings_dialog.findChild<QPushButton*>(
         QStringLiteral("ghostOutlineEnabled"));
     auto* ghost_line_width = settings_dialog.findChild<QSlider*>(
         QStringLiteral("ghostLineWidth"));
@@ -109,13 +108,20 @@ int main(int argc, char* argv[]) {
         QStringLiteral("ghostColorButton"));
     check(ghost_outline && ghost_line_width && ghost_outline_width && ghost_color,
           "settings exposes outline, pixel-width, and HSL color controls");
-    if (ghost_outline) ghost_outline->setChecked(true);
-    if (ghost_line_width) ghost_line_width->setValue(35);
-    if (ghost_outline_width) ghost_outline_width->setValue(20);
+    check(ghost_outline && ghost_outline->isCheckable(),
+          "outline is a toggle button rather than a checkbox");
+    check(ghost_line_width && ghost_line_width->minimum() == 0 &&
+              ghost_line_width->maximum() == 4 &&
+              ghost_outline_width && ghost_outline_width->minimum() == 0 &&
+              ghost_outline_width->maximum() == 4,
+          "width sliders expose five discrete stops");
+    if (ghost_outline) ghost_outline->click();
+    if (ghost_line_width) ghost_line_width->setValue(3);
+    if (ghost_outline_width) ghost_outline_width->setValue(3);
     check(settings_dialog.settings().ghost_reticle.outline_enabled &&
               settings_dialog.settings().ghost_reticle.line_width_tenths == 35 &&
-              settings_dialog.settings().ghost_reticle.outline_width_tenths == 20,
-          "pixel width sliders and outline switch are returned by settings");
+              settings_dialog.settings().ghost_reticle.outline_width_tenths == 25,
+          "discrete pixel widths and outline button are returned by settings");
     settings_dialog.hide();
 
     int preview_calls = 0;
@@ -127,7 +133,7 @@ int main(int argc, char* argv[]) {
             ++preview_calls;
             previewed = preferences;
         });
-    auto* preview_outline = preview_dialog.findChild<QCheckBox*>(
+    auto* preview_outline = preview_dialog.findChild<QPushButton*>(
         QStringLiteral("ghostOutlineEnabled"));
     auto* preview_line_width = preview_dialog.findChild<QSlider*>(
         QStringLiteral("ghostLineWidth"));
@@ -138,13 +144,13 @@ int main(int argc, char* argv[]) {
     check(preview_outline && preview_line_width && preview_preset &&
               preview_compensation,
           "the preview dialog exposes the ghost style controls");
-    if (preview_outline) preview_outline->setChecked(true);
-    if (preview_line_width) preview_line_width->setValue(42);
+    if (preview_outline) preview_outline->click();
+    if (preview_line_width) preview_line_width->setValue(4);
     if (preview_preset)
         preview_preset->setCurrentIndex(preview_preset->findData(QSize(1920, 1080)));
     if (preview_compensation) preview_compensation->setValue(1.25);
     check(preview_calls >= 2 &&
-              previewed.outline_enabled && previewed.line_width_tenths == 42 &&
+              previewed.outline_enabled && previewed.line_width_tenths == 45 &&
               previewed.width == 720 &&
               std::abs(previewed.bearing_compensation_deg - 1.25) < 1e-9,
           "all ghost settings stream through the live preview callback");

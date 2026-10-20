@@ -1917,13 +1917,13 @@ QPushButton[quiet="true"] { background:#151f2e; color:#c8d3df; }
 QPushButton[quiet="true"]:hover { background:#202f43; color:#f2f6fb; }
 QPushButton[primary="true"] { background:#1e3e75; color:#f7f9fc; }
 QPushButton[primary="true"]:hover { background:#285297; }
-QPushButton#arcToggle { min-width:58px; padding-left:8px; padding-right:8px;
+QPushButton#arcToggle,QPushButton#ghostOutlineEnabled { min-width:58px; padding-left:8px; padding-right:8px;
     background:#0c1420; color:#9aa8b8; }
-QPushButton#arcToggle:hover { background:#192638; color:#e6edf5; }
-QPushButton#arcToggle[highlighted="true"] { background:#1e3e75; color:#f8fafc;
+QPushButton#arcToggle:hover,QPushButton#ghostOutlineEnabled:hover { background:#192638; color:#e6edf5; }
+QPushButton#arcToggle[highlighted="true"],QPushButton#ghostOutlineEnabled[highlighted="true"] { background:#1e3e75; color:#f8fafc;
     font-weight:700; }
-QPushButton#arcToggle[highlighted="true"]:hover { background:#285297; }
-QPushButton#arcToggle[highlighted="true"]:pressed { background:#183563; }
+QPushButton#arcToggle[highlighted="true"]:hover,QPushButton#ghostOutlineEnabled[highlighted="true"]:hover { background:#285297; }
+QPushButton#arcToggle[highlighted="true"]:pressed,QPushButton#ghostOutlineEnabled[highlighted="true"]:pressed { background:#183563; }
 QPushButton#iconButton { background:transparent; border:0;
                          border-radius:9px; padding:6px; min-height:0; }
 QPushButton#iconButton:hover { background:#192638; }

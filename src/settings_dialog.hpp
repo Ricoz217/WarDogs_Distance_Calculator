@@ -8,7 +8,6 @@
 #include <optional>
 
 class QComboBox;
-class QCheckBox;
 class QDoubleSpinBox;
 class QHBoxLayout;
 class QKeySequenceEdit;
@@ -54,7 +53,7 @@ private:
     QKeySequenceEdit* impact_key_{};
     QKeySequenceEdit* ghost_arc_key_{};
     QComboBox* ghost_preset_{};
-    QCheckBox* ghost_outline_{};
+    QPushButton* ghost_outline_{};
     QSlider* ghost_line_width_{};
     QSlider* ghost_outline_width_{};
     QLabel* ghost_line_width_value_{};
