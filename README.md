@@ -2,7 +2,7 @@
 
 Windows 游戏坐标 OCR 与射表计算工具。方位角以正北（Y 轴正向）为 `0°`，顺时针一周；距离按 `1 游戏单位 = 100 m` 显示。
 
-当前版本：`1.4.1`
+当前版本：`1.4.2`
 
 使用教程：[War Dogs 射表计算器视频教程（Bilibili）](https://www.bilibili.com/video/BV1d3Y16MEWh)
 
@@ -119,7 +119,7 @@ Windows 游戏坐标 OCR 与射表计算工具。方位角以正北（Y 轴正�
 脚本会配置 Release 构建、运行测试、部署 Qt 运行库并生成：
 
 ```text
-out\WarDogsDistanceCalculator-v1.4.1-win-x64.zip
+out\WarDogsDistanceCalculator-v1.4.2-win-x64.zip
 ```
 
 仓库已携带 ONNX Runtime x64 运行文件和 PP-OCRv6 识别模型，构建过程不联网。
