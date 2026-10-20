@@ -52,6 +52,10 @@ int main(int argc, char* argv[]) {
     SettingsDialog settings_dialog(crowded_settings);
     settings_dialog.show();
     QApplication::processEvents();
+    check(settings_dialog.width() == settings_dialog.minimumSizeHint().width(),
+          "settings opens at the minimum width required by its content");
+    check(settings_dialog.width() < 800,
+          "settings no longer reserves the former oversized default width");
     const auto hotkey_editors = settings_dialog.findChildren<QKeySequenceEdit*>();
     check(hotkey_editors.size() == 6,
           "settings exposes all six configurable global hotkeys");

@@ -318,7 +318,7 @@ public:
         setWindowTitle(QStringLiteral("War Dogs 射表计算"));
         resize(620, 610);
         setMinimumWidth(560);
-        setMinimumHeight(610);
+        setMinimumHeight(460);
         terrain_discovery_ = wardogs::discover_terrain_maps(
             wardogs::default_terrain_directory());
         build_ui();
@@ -776,11 +776,12 @@ private:
         }
         sync_pinned_result();
         sync_ghost_solution();
-        fit_window_to_content();
-        QTimer::singleShot(0, this, [this] { fit_window_to_content(); });
+        fit_window_to_content(true);
+        QTimer::singleShot(0, this, [this] { fit_window_to_content(true); });
     }
 
-    void fit_window_to_content() {
+    void fit_window_to_content(bool preserve_existing_size = false) {
+        const QSize existing_size = size();
         app_frame_->layout()->activate();
         app_frame_->adjustSize();
         adjustSize();
@@ -794,9 +795,11 @@ private:
             : hint.height();
         const int target_height = std::max(
             610, std::min(natural_height, available_height));
-        setMinimumHeight(target_height);
-        resize(std::max(vehicle_mode_ ? 720 : 620, hint.width()),
-               target_height);
+        const QSize natural_size{
+            std::max(vehicle_mode_ ? 720 : 620, hint.width()), target_height};
+        resize(preserve_existing_size
+                   ? existing_size.expandedTo(minimumSize())
+                   : natural_size.expandedTo(minimumSize()));
     }
 
     void update_terrain_summary(std::optional<double> height_delta = std::nullopt) {

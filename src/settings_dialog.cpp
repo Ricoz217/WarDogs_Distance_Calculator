@@ -335,7 +335,6 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
     configure_frameless_window(this);
     setWindowTitle(QStringLiteral("设置 · War Dogs 射表计算"));
     setModal(true);
-    resize(800, 620);
     auto* outer = new QVBoxLayout(this);
     outer->setContentsMargins(0, 0, 0, 0);
     outer->setSpacing(0);
@@ -588,6 +587,9 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
     footer->addWidget(buttons);
     root->addLayout(footer);
     outer->addWidget(content);
+    outer->activate();
+    const QSize required = minimumSizeHint();
+    resize(required.width(), std::max(620, required.height()));
     enable_rounded_window_corners(this);
 }
 
