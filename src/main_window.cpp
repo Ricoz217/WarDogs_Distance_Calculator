@@ -800,6 +800,10 @@ private:
     }
 
     void update_terrain_summary(std::optional<double> height_delta = std::nullopt) {
+        terrain_summary_->setProperty(
+            "warning", terrain_map_.has_value() && terrain_map_->outdated);
+        terrain_summary_->style()->unpolish(terrain_summary_);
+        terrain_summary_->style()->polish(terrain_summary_);
         if (!terrain_map_) {
             const auto count = terrain_discovery_.installed.size();
             terrain_summary_->setText(count
@@ -811,6 +815,8 @@ private:
         }
         auto text = qtext(terrain_map_->spec.display_name) +
                     QStringLiteral(" · 2 m / 0.1 m 高度数据");
+        if (terrain_map_->outdated)
+            text += QStringLiteral(" · ⚠ Season 1 数据包已过期，请更新至 Season 2");
         if (height_delta) {
             const auto value = QString::number(*height_delta, 'f', 1);
             text += QStringLiteral(" · 目标高差 ") +
@@ -1875,6 +1881,7 @@ QSlider[pinnedMenuSlider="true"]::handle:horizontal:hover { background:#f8fafc;
 QLabel#title,QLabel#dialogTitle { color:#f4f7fb; font-size:25px; font-weight:700; }
 QLabel#dialogTitle { font-size:22px; }
 QLabel#muted { color:#8190a3; }
+QLabel#muted[warning="true"] { color:#fbbf24; }
 QLabel#status { color:#75c9e8; padding:6px 4px 2px 4px; }
 QLabel#status[error="true"] { color:#fca5a5; }
 QLabel#resultCaption { color:#8190a3; font-size:12px; font-weight:600; }

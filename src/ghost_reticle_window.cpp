@@ -5,14 +5,12 @@
 #include <QGuiApplication>
 #include <QCursor>
 #include <QFont>
-#include <QFontMetricsF>
 #include <QIcon>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPixmap>
-#include <QPolygonF>
 #include <QScreen>
 #include <QToolButton>
 #include <QHBoxLayout>
@@ -53,27 +51,6 @@ struct GhostTextLabel {
     QString text;
 };
 
-// The scrim plate follows the real glyph box reported by the font metrics,
-// never the generous alignment rectangle, otherwise the plate would be twice
-// as wide as the digits it protects.
-void draw_scrim_plates(QPainter& painter, const QFont& font,
-                       const std::vector<GhostTextLabel>& labels,
-                       const QColor& scrim, double padding) {
-    if (labels.empty() || scrim.alpha() == 0) return;
-    painter.save();
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(scrim);
-    const QFontMetricsF metrics(font);
-    for (const auto& label : labels) {
-        const QRectF glyphs =
-            metrics.boundingRect(label.rect, label.flags, label.text);
-        const QRectF plate =
-            glyphs.adjusted(-padding, -padding, padding, padding);
-        painter.drawRoundedRect(plate, padding, padding);
-    }
-    painter.restore();
-}
-
 void draw_label_halo(QPainter& painter,
                      const std::vector<GhostTextLabel>& labels,
                      const QColor& halo, double offset) {
@@ -98,31 +75,19 @@ void draw_labels(QPainter& painter, const std::vector<GhostTextLabel>& labels,
 // halo bite a notch into the already painted foreground rail.
 void paint_ghost_figure(QPainter& painter, const wardogs::GhostStyle& style,
                         const QFont& font, const QPainterPath& path,
-                        double line_width, const QPolygonF& marker,
-                        const QPolygonF& marker_halo,
                         const std::vector<GhostTextLabel>& labels) {
     painter.setFont(font);
     const QColor foreground = ghost_qcolor(style.foreground);
-    const QColor halo = ghost_qcolor(style.halo);
-    if (style.halo_enabled) {
+    const QColor outline = ghost_qcolor(style.outline);
+    if (style.outline_enabled) {
         painter.strokePath(path, ghost_line_pen(
-                                     style.halo,
-                                     line_width +
-                                         2.0 * style.halo_width_delta));
+                                     style.outline,
+                                     style.line_width +
+                                         2.0 * style.outline_width));
     }
-    painter.strokePath(path, ghost_line_pen(style.foreground, line_width));
-    if (style.marker_enabled && marker.size() == 3) {
-        painter.setPen(Qt::NoPen);
-        if (style.halo_enabled) {
-            painter.setBrush(halo);
-            painter.drawPolygon(marker_halo);
-        }
-        painter.setBrush(foreground);
-        painter.drawPolygon(marker);
-        painter.setBrush(Qt::NoBrush);
-    }
-    if (style.halo_enabled)
-        draw_label_halo(painter, labels, halo, style.text_halo_offset);
+    painter.strokePath(path, ghost_line_pen(style.foreground, style.line_width));
+    if (style.outline_enabled)
+        draw_label_halo(painter, labels, outline, style.outline_width);
     draw_labels(painter, labels, foreground);
 }
 
@@ -160,13 +125,23 @@ GhostReticleWindow::Preferences GhostReticleWindow::clamped(
         preferences.bearing_compensation_deg,
         Preferences::minimum_bearing_compensation_deg,
         Preferences::maximum_bearing_compensation_deg);
-    preferences.stroke_scale_percent = std::clamp(
-        preferences.stroke_scale_percent,
-        Preferences::minimum_stroke_scale_percent,
-        Preferences::maximum_stroke_scale_percent);
-    preferences.scrim_level = std::clamp(
-        preferences.scrim_level, Preferences::minimum_scrim_level,
-        Preferences::maximum_scrim_level);
+    preferences.line_width_tenths = std::clamp(
+        preferences.line_width_tenths,
+        Preferences::minimum_line_width_tenths,
+        Preferences::maximum_line_width_tenths);
+    preferences.outline_width_tenths = std::clamp(
+        preferences.outline_width_tenths,
+        Preferences::minimum_outline_width_tenths,
+        Preferences::maximum_outline_width_tenths);
+    preferences.color_hue = std::clamp(
+        preferences.color_hue, Preferences::minimum_hue,
+        Preferences::maximum_hue);
+    preferences.color_saturation = std::clamp(
+        preferences.color_saturation, Preferences::minimum_color_percent,
+        Preferences::maximum_color_percent);
+    preferences.color_lightness = std::clamp(
+        preferences.color_lightness, Preferences::minimum_color_percent,
+        Preferences::maximum_color_percent);
     return preferences;
 }
 
@@ -218,7 +193,9 @@ GhostReticleWindow::GhostReticleWindow(Preferences preferences,
 
 void GhostReticleWindow::apply_adjustment_controls_style() {
     if (!adjustment_controls_) return;
-    const auto rgb = wardogs::ghost_color_rgb(preferences_.color_preset);
+    const auto rgb = wardogs::ghost_hsl_rgb(
+        preferences_.color_hue, preferences_.color_saturation,
+        preferences_.color_lightness);
     const QColor accent(rgb[0], rgb[1], rgb[2]);
     adjustment_controls_->setStyleSheet(
         QStringLiteral(
@@ -282,7 +259,9 @@ void GhostReticleWindow::set_preferences(const Preferences& preferences) {
     preferences_ = clamped(preferences);
     if (preferences_.width != previous.width)
         center_on_screen(preferences_.width);
-    if (preferences_.color_preset != previous.color_preset)
+    if (preferences_.color_hue != previous.color_hue ||
+        preferences_.color_saturation != previous.color_saturation ||
+        preferences_.color_lightness != previous.color_lightness)
         apply_adjustment_controls_style();
     update();
 }
@@ -430,9 +409,10 @@ void GhostReticleWindow::paintEvent(QPaintEvent* event) {
     painter.setRenderHint(QPainter::Antialiasing);
     const double scale = width() / wardogs::ghost_base_width;
     const wardogs::GhostStyle style = wardogs::ghost_style(
-        preferences_.color_preset, preferences_.opacity_percent,
-        preferences_.stroke_scale_percent, preferences_.scrim_level,
-        preferences_.readability_enabled, scale);
+        preferences_.color_hue, preferences_.color_saturation,
+        preferences_.color_lightness, preferences_.opacity_percent,
+        preferences_.line_width_tenths, preferences_.outline_width_tenths,
+        preferences_.outline_enabled, scale);
 
     if ((overlay_enabled_ || adjusting_) && solution_) {
         draw_bearing(painter, style, scale, solution_->bearing_deg);
@@ -444,7 +424,9 @@ void GhostReticleWindow::paintEvent(QPaintEvent* event) {
     }
 
     if (adjusting_) {
-        const auto rgb = wardogs::ghost_color_rgb(preferences_.color_preset);
+        const auto rgb = wardogs::ghost_hsl_rgb(
+            preferences_.color_hue, preferences_.color_saturation,
+            preferences_.color_lightness);
         painter.setPen(QPen(QColor(rgb[0], rgb[1], rgb[2]),
                             style.frame_width));
         painter.setBrush(Qt::NoBrush);
@@ -489,47 +471,7 @@ void GhostReticleWindow::draw_bearing(QPainter& painter,
         }
     }
 
-    const double center_x = wardogs::ghost_center_x * scale;
-    const double index_top =
-        baseline - wardogs::ghost_index_length * scale;
-    const double arm = wardogs::ghost_marker_arm * scale;
-    const double depth = wardogs::ghost_marker_depth * scale;
-    const double grow = style.halo_width_delta;
-    QPolygonF marker;
-    QPolygonF marker_halo;
-    if (style.marker_enabled) {
-        path.moveTo(center_x, baseline - 2 * scale);
-        path.lineTo(center_x, index_top);
-        marker << QPointF(center_x, index_top)
-               << QPointF(center_x - arm, index_top - depth)
-               << QPointF(center_x + arm, index_top - depth);
-        marker_halo << QPointF(center_x, index_top + grow)
-                    << QPointF(center_x - arm - grow, index_top - depth - grow)
-                    << QPointF(center_x + arm + grow, index_top - depth - grow);
-        labels.push_back(GhostTextLabel{
-            QRectF(center_x - 50 * scale, 6 * scale, 100 * scale, 40 * scale),
-            Qt::AlignHCenter | Qt::AlignTop,
-            QStringLiteral("%1°").arg(game_bearing, 0, 'f', 1)});
-    }
-
-    if (style.scrim_enabled) {
-        if (style.scrim_bands) {
-            painter.save();
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(ghost_qcolor(style.scrim));
-            const double half = wardogs::ghost_scrim_band_half * scale;
-            painter.drawRect(QRectF(
-                wardogs::ghost_bearing_left * scale, baseline - half,
-                (wardogs::ghost_bearing_right - wardogs::ghost_bearing_left) *
-                    scale,
-                2 * half));
-            painter.restore();
-        }
-        draw_scrim_plates(painter, font, labels, ghost_qcolor(style.scrim),
-                          wardogs::ghost_scrim_padding * scale);
-    }
-    paint_ghost_figure(painter, style, font, path, style.bearing_width,
-                       marker, marker_halo, labels);
+    paint_ghost_figure(painter, style, font, path, labels);
     painter.restore();
 }
 
@@ -543,7 +485,6 @@ void GhostReticleWindow::draw_mil(QPainter& painter,
                                (wardogs::ghost_mil_bottom -
                                 wardogs::ghost_mil_top) * scale));
     const double rail_x = wardogs::ghost_mil_rail_x * scale;
-    const double center_y = wardogs::ghost_center_y * scale;
 
     QPainterPath path;
     std::vector<GhostTextLabel> labels;
@@ -561,50 +502,7 @@ void GhostReticleWindow::draw_mil(QPainter& painter,
             QStringLiteral("%1 mils").arg(tick.value)});
     }
 
-    const double index_left = rail_x + 26 * scale;
-    const double index_right =
-        index_left + wardogs::ghost_index_length * scale;
-    const double arm = wardogs::ghost_marker_arm * scale;
-    const double depth = wardogs::ghost_marker_depth * scale;
-    const double grow = style.halo_width_delta;
-    QPolygonF marker;
-    QPolygonF marker_halo;
-    if (style.marker_enabled) {
-        path.moveTo(index_left, center_y);
-        path.lineTo(index_right, center_y);
-        marker << QPointF(index_right, center_y)
-               << QPointF(index_right + depth, center_y - arm)
-               << QPointF(index_right + depth, center_y + arm);
-        marker_halo << QPointF(index_right - grow, center_y)
-                    << QPointF(index_right + depth + grow,
-                               center_y - arm - grow)
-                    << QPointF(index_right + depth + grow,
-                               center_y + arm + grow);
-        labels.push_back(GhostTextLabel{
-            QRectF(index_right + depth + 2 * scale, center_y - 20 * scale,
-                   94 * scale, 40 * scale),
-            Qt::AlignLeft | Qt::AlignVCenter,
-            QStringLiteral("%1 mil").arg(solution_->mil, 0, 'f', 1)});
-    }
-
-    if (style.scrim_enabled) {
-        if (style.scrim_bands) {
-            painter.save();
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(ghost_qcolor(style.scrim));
-            const double half = wardogs::ghost_scrim_band_half * scale;
-            painter.drawRect(QRectF(rail_x - half,
-                                    wardogs::ghost_mil_top * scale,
-                                    26 * scale + 2 * half,
-                                    (wardogs::ghost_mil_bottom -
-                                     wardogs::ghost_mil_top) * scale));
-            painter.restore();
-        }
-        draw_scrim_plates(painter, font, labels, ghost_qcolor(style.scrim),
-                          wardogs::ghost_scrim_padding * scale);
-    }
-    paint_ghost_figure(painter, style, font, path, style.rail_width,
-                       marker, marker_halo, labels);
+    paint_ghost_figure(painter, style, font, path, labels);
     painter.restore();
 }
 
@@ -618,7 +516,6 @@ void GhostReticleWindow::draw_mortar_mil(QPainter& painter,
                                (wardogs::ghost_mil_bottom -
                                 wardogs::ghost_mil_top) * scale));
     const double rail_x = wardogs::ghost_mil_rail_x * scale;
-    const double center_y = wardogs::ghost_center_y * scale;
 
     QPainterPath path;
     std::vector<GhostTextLabel> labels;
@@ -637,50 +534,7 @@ void GhostReticleWindow::draw_mortar_mil(QPainter& painter,
             QString::number(tick.value)});
     }
 
-    const double index_left = rail_x + 26 * scale;
-    const double index_right =
-        index_left + wardogs::ghost_index_length * scale;
-    const double arm = wardogs::ghost_marker_arm * scale;
-    const double depth = wardogs::ghost_marker_depth * scale;
-    const double grow = style.halo_width_delta;
-    QPolygonF marker;
-    QPolygonF marker_halo;
-    if (style.marker_enabled) {
-        path.moveTo(index_left, center_y);
-        path.lineTo(index_right, center_y);
-        marker << QPointF(index_right, center_y)
-               << QPointF(index_right + depth, center_y - arm)
-               << QPointF(index_right + depth, center_y + arm);
-        marker_halo << QPointF(index_right - grow, center_y)
-                    << QPointF(index_right + depth + grow,
-                               center_y - arm - grow)
-                    << QPointF(index_right + depth + grow,
-                               center_y + arm + grow);
-        labels.push_back(GhostTextLabel{
-            QRectF(index_right + depth + 2 * scale, center_y - 20 * scale,
-                   94 * scale, 40 * scale),
-            Qt::AlignLeft | Qt::AlignVCenter,
-            QStringLiteral("%1 mil").arg(*mortar_mil_, 0, 'f', 1)});
-    }
-
-    if (style.scrim_enabled) {
-        if (style.scrim_bands) {
-            painter.save();
-            painter.setPen(Qt::NoPen);
-            painter.setBrush(ghost_qcolor(style.scrim));
-            const double half = wardogs::ghost_scrim_band_half * scale;
-            painter.drawRect(QRectF(rail_x - half,
-                                    wardogs::ghost_mil_top * scale,
-                                    26 * scale + 2 * half,
-                                    (wardogs::ghost_mil_bottom -
-                                     wardogs::ghost_mil_top) * scale));
-            painter.restore();
-        }
-        draw_scrim_plates(painter, font, labels, ghost_qcolor(style.scrim),
-                          wardogs::ghost_scrim_padding * scale);
-    }
-    paint_ghost_figure(painter, style, font, path, style.rail_width,
-                       marker, marker_halo, labels);
+    paint_ghost_figure(painter, style, font, path, labels);
     painter.restore();
 }
 

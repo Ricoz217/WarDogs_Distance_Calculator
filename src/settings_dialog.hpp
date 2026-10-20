@@ -8,11 +8,14 @@
 #include <optional>
 
 class QComboBox;
+class QCheckBox;
 class QDoubleSpinBox;
 class QHBoxLayout;
 class QKeySequenceEdit;
+class QLabel;
 class QPlainTextEdit;
 class QPushButton;
+class QSlider;
 
 class SettingsDialog final : public QDialog {
 public:
@@ -40,6 +43,8 @@ private:
     void accept_if_valid();
     void request_ghost_adjustment();
     void notify_ghost_preview();
+    void choose_ghost_color();
+    void refresh_ghost_color_button();
 
     QComboBox* backend_{};
     QKeySequenceEdit* region_key_{};
@@ -49,10 +54,12 @@ private:
     QKeySequenceEdit* impact_key_{};
     QKeySequenceEdit* ghost_arc_key_{};
     QComboBox* ghost_preset_{};
-    QComboBox* ghost_readability_{};
-    QComboBox* ghost_color_{};
-    QComboBox* ghost_stroke_{};
-    QComboBox* ghost_scrim_{};
+    QCheckBox* ghost_outline_{};
+    QSlider* ghost_line_width_{};
+    QSlider* ghost_outline_width_{};
+    QLabel* ghost_line_width_value_{};
+    QLabel* ghost_outline_width_value_{};
+    QPushButton* ghost_color_button_{};
     QDoubleSpinBox* ghost_bearing_compensation_{};
     QPlainTextEdit* pattern_{};
     std::optional<wardogs::CaptureRegion> capture_region_;

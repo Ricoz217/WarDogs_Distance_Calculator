@@ -68,6 +68,14 @@ int main(int argc, char* argv[]) {
           "discovery exposes only verified terrain packages");
     check(discovery.problems.size() == 2,
           "discovery reports damaged and missing packages");
+
+    const std::vector legacy_specs{
+        wardogs::TerrainMapSpec{"test-map", L"旧版", L"valid.wdt",
+                                std::string(64, '0'), {digest}},
+    };
+    const auto legacy = wardogs::discover_terrain_maps(temporary, legacy_specs);
+    check(legacy.installed.size() == 1 && legacy.installed.front().outdated,
+          "a recognized legacy hash remains loadable and is marked outdated");
     std::error_code ignored;
     std::filesystem::remove_all(temporary, ignored);
 

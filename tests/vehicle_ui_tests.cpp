@@ -10,6 +10,7 @@
 #include <QApplication>
 #include <QContextMenuEvent>
 #include <QComboBox>
+#include <QCheckBox>
 #include <QDoubleSpinBox>
 #include <QHoverEvent>
 #include <QImage>
@@ -98,48 +99,23 @@ int main(int argc, char* argv[]) {
                        .ghost_reticle.bearing_compensation_deg +
                    0.35) < 1e-9,
           "manually entered bearing compensation is returned by settings");
-    auto* ghost_readability = settings_dialog.findChild<QComboBox*>(
-        QStringLiteral("ghostReadability"));
-    auto* ghost_color = settings_dialog.findChild<QComboBox*>(
-        QStringLiteral("ghostColorPreset"));
-    auto* ghost_stroke = settings_dialog.findChild<QComboBox*>(
-        QStringLiteral("ghostStrokeScale"));
-    auto* ghost_scrim = settings_dialog.findChild<QComboBox*>(
-        QStringLiteral("ghostScrimLevel"));
-    check(ghost_readability && ghost_color && ghost_stroke && ghost_scrim,
-          "settings exposes ghost readability, color, stroke, and scrim controls");
-    check(ghost_readability && ghost_color && ghost_stroke && ghost_scrim &&
-              ghost_readability->count() == 2 && ghost_color->count() == 5 &&
-              ghost_stroke->count() == 7 && ghost_scrim->count() == 3,
-          "the ghost style controls list every supported value");
-    if (ghost_color) {
-        const int cyan_index = ghost_color->findData(
-            static_cast<int>(wardogs::GhostColorPreset::cyan));
-        check(cyan_index >= 0 && !ghost_color->itemIcon(cyan_index).isNull(),
-              "the cyan preset is offered with a preview swatch");
-        ghost_color->setCurrentIndex(cyan_index);
-        check(settings_dialog.settings().ghost_reticle.color_preset ==
-                  wardogs::GhostColorPreset::cyan,
-              "choosing a color preset is returned by settings");
-    }
-    if (ghost_stroke) {
-        const int bold_index = ghost_stroke->findData(175);
-        check(bold_index >= 0, "the 175 percent stroke preset is offered");
-        ghost_stroke->setCurrentIndex(bold_index);
-        check(settings_dialog.settings().ghost_reticle.stroke_scale_percent ==
-                  175,
-              "choosing a stroke scale is returned by settings");
-    }
-    if (ghost_scrim) {
-        ghost_scrim->setCurrentIndex(ghost_scrim->findData(2));
-        check(settings_dialog.settings().ghost_reticle.scrim_level == 2,
-              "choosing a scrim level is returned by settings");
-    }
-    if (ghost_readability) {
-        ghost_readability->setCurrentIndex(ghost_readability->findData(1));
-        check(settings_dialog.settings().ghost_reticle.readability_enabled,
-              "the readability toggle is returned by settings");
-    }
+    auto* ghost_outline = settings_dialog.findChild<QCheckBox*>(
+        QStringLiteral("ghostOutlineEnabled"));
+    auto* ghost_line_width = settings_dialog.findChild<QSlider*>(
+        QStringLiteral("ghostLineWidth"));
+    auto* ghost_outline_width = settings_dialog.findChild<QSlider*>(
+        QStringLiteral("ghostOutlineWidth"));
+    auto* ghost_color = settings_dialog.findChild<QPushButton*>(
+        QStringLiteral("ghostColorButton"));
+    check(ghost_outline && ghost_line_width && ghost_outline_width && ghost_color,
+          "settings exposes outline, pixel-width, and HSL color controls");
+    if (ghost_outline) ghost_outline->setChecked(true);
+    if (ghost_line_width) ghost_line_width->setValue(35);
+    if (ghost_outline_width) ghost_outline_width->setValue(20);
+    check(settings_dialog.settings().ghost_reticle.outline_enabled &&
+              settings_dialog.settings().ghost_reticle.line_width_tenths == 35 &&
+              settings_dialog.settings().ghost_reticle.outline_width_tenths == 20,
+          "pixel width sliders and outline switch are returned by settings");
     settings_dialog.hide();
 
     int preview_calls = 0;
@@ -151,29 +127,25 @@ int main(int argc, char* argv[]) {
             ++preview_calls;
             previewed = preferences;
         });
-    auto* preview_color = preview_dialog.findChild<QComboBox*>(
-        QStringLiteral("ghostColorPreset"));
-    auto* preview_readability = preview_dialog.findChild<QComboBox*>(
-        QStringLiteral("ghostReadability"));
+    auto* preview_outline = preview_dialog.findChild<QCheckBox*>(
+        QStringLiteral("ghostOutlineEnabled"));
+    auto* preview_line_width = preview_dialog.findChild<QSlider*>(
+        QStringLiteral("ghostLineWidth"));
     auto* preview_preset = preview_dialog.findChild<QComboBox*>(
         QStringLiteral("ghostReticlePreset"));
     auto* preview_compensation = preview_dialog.findChild<QDoubleSpinBox*>(
         QStringLiteral("ghostBearingCompensation"));
-    check(preview_color && preview_readability && preview_preset &&
+    check(preview_outline && preview_line_width && preview_preset &&
               preview_compensation,
           "the preview dialog exposes the ghost style controls");
-    if (preview_color) {
-        preview_color->setCurrentIndex(preview_color->findData(
-            static_cast<int>(wardogs::GhostColorPreset::yellow)));
-    }
-    if (preview_readability)
-        preview_readability->setCurrentIndex(preview_readability->findData(1));
+    if (preview_outline) preview_outline->setChecked(true);
+    if (preview_line_width) preview_line_width->setValue(42);
     if (preview_preset)
         preview_preset->setCurrentIndex(preview_preset->findData(QSize(1920, 1080)));
     if (preview_compensation) preview_compensation->setValue(1.25);
     check(preview_calls >= 2 &&
-              previewed.color_preset == wardogs::GhostColorPreset::yellow &&
-              previewed.readability_enabled && previewed.width == 720 &&
+              previewed.outline_enabled && previewed.line_width_tenths == 42 &&
+              previewed.width == 720 &&
               std::abs(previewed.bearing_compensation_deg - 1.25) < 1e-9,
           "all ghost settings stream through the live preview callback");
     preview_dialog.hide();
@@ -234,10 +206,10 @@ int main(int argc, char* argv[]) {
         return qBlue(pixel) > qRed(pixel) + 40 &&
                qGreen(pixel) > qRed(pixel) + 40;
     };
-    const QRect bearing_marker_region(QPoint(scaled(410), scaled(0)),
-                                      QPoint(scaled(550), scaled(60)));
-    const QRect mil_marker_region(QPoint(scaled(824), scaled(93)),
-                                  QPoint(scaled(952), scaled(627)));
+    const QRect bearing_marker_region(QPoint(scaled(430), scaled(4)),
+                                      QPoint(scaled(530), scaled(56)));
+    const QRect mil_marker_region(QPoint(scaled(828), scaled(330)),
+                                  QPoint(scaled(950), scaled(390)));
     const QRect bearing_band(QPoint(scaled(150), scaled(86)),
                              QPoint(scaled(470), scaled(90)));
     const QRect label_band(QPoint(scaled(150), scaled(92)),
@@ -246,22 +218,25 @@ int main(int argc, char* argv[]) {
               count_pixels(ghost_render, mil_marker_region, opaque_pixel) == 0,
           "the default ghost render leaves the marker zones empty");
 
-    wardogs::GhostReticlePreferences readable;
-    readable.width = ghost.width();
-    readable.readability_enabled = true;
-    ghost.set_preferences(readable);
-    QImage readable_render(ghost.size(), QImage::Format_ARGB32_Premultiplied);
-    readable_render.fill(Qt::transparent);
-    ghost.render(&readable_render);
-    check(count_pixels(readable_render, bearing_marker_region, opaque_pixel) > 0 &&
-              count_pixels(readable_render, mil_marker_region, opaque_pixel) > 0,
-          "the readability assist marks the unknown center read point");
-    check(count_pixels(readable_render, bearing_band, red_family) > 0 &&
-              count_pixels(readable_render, bearing_band, dark_halo) > 0,
-          "every line is stroked twice: foreground over a dark halo");
+    wardogs::GhostReticlePreferences outlined;
+    outlined.width = ghost.width();
+    outlined.outline_enabled = true;
+    outlined.outline_width_tenths = 20;
+    ghost.set_preferences(outlined);
+    QImage outlined_render(ghost.size(), QImage::Format_ARGB32_Premultiplied);
+    outlined_render.fill(Qt::transparent);
+    ghost.render(&outlined_render);
+    check(count_pixels(outlined_render, bearing_marker_region, opaque_pixel) == 0 &&
+              count_pixels(outlined_render, mil_marker_region, opaque_pixel) == 0,
+          "outline mode does not add center markers or decimal readouts");
+    check(count_pixels(outlined_render, bearing_band, red_family) > 0 &&
+              count_pixels(outlined_render, bearing_band, dark_halo) > 0,
+          "outline mode adds a dark border behind the chosen color");
 
-    wardogs::GhostReticlePreferences cyan = readable;
-    cyan.color_preset = wardogs::GhostColorPreset::cyan;
+    wardogs::GhostReticlePreferences cyan = outlined;
+    cyan.color_hue = 187;
+    cyan.color_saturation = 100;
+    cyan.color_lightness = 42;
     ghost.set_preferences(cyan);
     QImage cyan_render(ghost.size(), QImage::Format_ARGB32_Premultiplied);
     cyan_render.fill(Qt::transparent);
@@ -270,29 +245,15 @@ int main(int argc, char* argv[]) {
               count_pixels(cyan_render, cyan_render.rect(), red_family) == 0,
           "the color preset drives every pixel, removing the hard-coded red");
 
-    wardogs::GhostReticlePreferences thick = readable;
-    thick.stroke_scale_percent = 225;
+    wardogs::GhostReticlePreferences thick = outlined;
+    thick.line_width_tenths = 55;
     ghost.set_preferences(thick);
     QImage thick_render(ghost.size(), QImage::Format_ARGB32_Premultiplied);
     thick_render.fill(Qt::transparent);
     ghost.render(&thick_render);
     check(count_pixels(thick_render, label_band, opaque_pixel) >
-              count_pixels(readable_render, label_band, opaque_pixel),
-          "a thicker stroke widens the painted geometry around the labels");
-
-    const auto plate_alpha = [](QRgb pixel) {
-        return qAlpha(pixel) >= 60 && qAlpha(pixel) <= 70 &&
-               qRed(pixel) < 45 && qGreen(pixel) < 50 && qBlue(pixel) < 60;
-    };
-    wardogs::GhostReticlePreferences scrim = readable;
-    scrim.scrim_level = 2;
-    ghost.set_preferences(scrim);
-    QImage scrim_render(ghost.size(), QImage::Format_ARGB32_Premultiplied);
-    scrim_render.fill(Qt::transparent);
-    ghost.render(&scrim_render);
-    check(count_pixels(scrim_render, label_band, plate_alpha) >
-              count_pixels(readable_render, label_band, plate_alpha),
-          "the scrim level adds dark backing plates behind the labels");
+              count_pixels(outlined_render, label_band, opaque_pixel),
+          "a larger pixel width widens the painted geometry around the labels");
 
     ghost.set_mortar_solution(215.0, 500.0);
     QImage mortar_render(ghost.size(), QImage::Format_ARGB32_Premultiplied);

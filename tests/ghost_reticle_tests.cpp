@@ -1,6 +1,5 @@
 #include "wardogs/ghost_reticle.hpp"
 
-#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -113,211 +112,27 @@ int main() {
     check(!wardogs::ghost_preset_width(1920, 1200),
           "non-16:9 resolutions are not offered without measurements");
 
-    using wardogs::GhostColorPreset;
-    using wardogs::GhostStyle;
+    const auto red = wardogs::ghost_hsl_rgb(3, 100, 59);
+    check(red[0] >= 250 && red[1] >= 50 && red[1] <= 70 &&
+              red[2] >= 40 && red[2] <= 60,
+          "the default HSL color reproduces the existing red reticle");
+    check(red == wardogs::ghost_hsl_rgb(363, 100, 59),
+          "HSL hue wraps through 360 degrees");
 
-    const auto check_rgb = [](GhostColorPreset preset, int r, int g, int b,
-                              const char* message) {
-        const auto rgb = wardogs::ghost_color_rgb(preset);
-        check(rgb[0] == r && rgb[1] == g && rgb[2] == b, message);
-    };
-    check_rgb(GhostColorPreset::red, 255, 59, 48,
-              "red keeps the factory identity color");
-    check_rgb(GhostColorPreset::green, 0, 200, 83,
-              "green uses a high-visibility competitive-FPS green");
-    check_rgb(GhostColorPreset::cyan, 0, 188, 212,
-              "cyan uses a distinct high-visibility cyan");
-    check_rgb(GhostColorPreset::yellow, 255, 214, 0,
-              "yellow uses a high-visibility yellow");
-    check_rgb(GhostColorPreset::white, 255, 255, 255,
-              "white remains a neutral high-contrast option");
-
-    const auto halo_alpha = [](const GhostStyle& style) {
-        return static_cast<int>(style.halo >> 24) & 0xFF;
-    };
-    const auto foreground_alpha = [](const GhostStyle& style) {
-        return static_cast<int>(style.foreground >> 24) & 0xFF;
-    };
-    const auto scrim_alpha = [](const GhostStyle& style) {
-        return static_cast<int>(style.scrim >> 24) & 0xFF;
-    };
-
-    const GhostStyle factory =
-        wardogs::ghost_style(GhostColorPreset::red, 80, 100, 0, false, 1.0);
-    check(factory.foreground == 0xCCFF3B30u,
-          "the default style reproduces #ff3b30 at 80 percent opacity");
-    check(near(factory.bearing_width, 2.6) && near(factory.rail_width, 2.7),
-          "the default strokes keep the measured 2.6 / 2.7 px widths");
-    check(near(factory.label_pixel_size, 17.0) &&
-              near(factory.hint_pixel_size, 14.0),
-          "the default fonts keep the measured 17 / 14 px sizes");
-    check(!factory.halo_enabled && !factory.marker_enabled &&
-              near(factory.halo_width_delta, 0.0) && !factory.scrim_enabled,
-          "the readability assist and scrim are strictly opt-in");
-
-    check(halo_alpha(wardogs::ghost_style(GhostColorPreset::red, 20, 100, 0,
-                                          true, 1.0)) == 140 &&
-              halo_alpha(wardogs::ghost_style(GhostColorPreset::red, 50, 100, 0,
-                                              true, 1.0)) == 179 &&
-              halo_alpha(wardogs::ghost_style(GhostColorPreset::red, 80, 100, 0,
-                                              true, 1.0)) == 217 &&
-              halo_alpha(wardogs::ghost_style(GhostColorPreset::red, 100, 100,
-                                              0, true, 1.0)) == 242,
-          "the halo alpha ladder follows the compressed opacity slope");
-
-    for (int opacity = 20; opacity <= 50; opacity += 5) {
-        const GhostStyle style = wardogs::ghost_style(
-            GhostColorPreset::red, opacity, 100, 0, true, 1.0);
-        check(static_cast<double>(halo_alpha(style)) >=
-                  1.35 * foreground_alpha(style),
-              "the outline carries the glyphs while the foreground stays faint");
-    }
-    for (const int opacity : {0, 19, 20, 100, 101, 500}) {
-        const GhostStyle style = wardogs::ghost_style(
-            GhostColorPreset::red, opacity, 100, 0, true, 1.0);
-        check(halo_alpha(style) >= 115 && halo_alpha(style) <= 245,
-              "the halo stays inside its usable alpha band");
-        check(static_cast<double>(halo_alpha(style)) >=
-                  0.9 * foreground_alpha(style),
-              "the halo never becomes a black sticker over the foreground");
-    }
-
-    const double bearing_pitch = wardogs::ghost_bearing_tick_pitch_base();
-    const double rail_pitch = wardogs::ghost_mil_tick_pitch_base();
-    check(near(bearing_pitch, 22.2, 1e-9),
-          "3 degree bearing ticks keep the measured 7.4 px base spacing");
-    check(near(rail_pitch, 136.0, 1e-9),
-          "the tightest rail pitch is the mortar 50 mil / 136 px spacing");
-    for (const double scale : {0.5, 0.8333, 1.0, 2.0, 4.0}) {
-        for (const int stroke : {75, 100, 225}) {
-            const GhostStyle style = wardogs::ghost_style(
-                GhostColorPreset::red, 80, stroke, 0, true, scale);
-            check(style.bearing_width + 2.0 * style.halo_width_delta <
-                      0.55 * bearing_pitch * scale,
-                  "bearing stroke plus halo stays inside the anti-fuzz budget");
-            check(style.rail_width + 2.0 * style.halo_width_delta <
-                      0.55 * rail_pitch * scale,
-                  "rail stroke plus halo stays inside the anti-fuzz budget");
-        }
-    }
-    check(wardogs::ghost_style(GhostColorPreset::red, 80, 75, 0, true, 0.5)
-                  .bearing_width >= 1.5,
-          "even the thinnest preset keeps a usable stroke in the smallest window");
-    for (const double scale : {0.5, 0.75, 1.0, 2.0, 4.0}) {
-        double previous_width = 0.0;
-        double previous_halo = 0.0;
-        for (int stroke = wardogs::GhostReticlePreferences::
-                          minimum_stroke_scale_percent;
-             stroke <= wardogs::GhostReticlePreferences::
-                           maximum_stroke_scale_percent;
-             stroke +=
-             wardogs::GhostReticlePreferences::stroke_scale_step_percent) {
-            const GhostStyle style = wardogs::ghost_style(
-                GhostColorPreset::red, 80, stroke, 0, true, scale);
-            check(style.bearing_width > previous_width,
-                  "every stroke preset is a distinct line width at every window size");
-            previous_width = style.bearing_width;
-            if (stroke <= 125) {
-                check(style.halo_width_delta > previous_halo,
-                      "the halo follows the stroke multiplier at the low end");
-                previous_halo = style.halo_width_delta;
-            }
-        }
-    }
-
-    const double width75 = wardogs::ghost_style(GhostColorPreset::red, 80, 75, 0,
-                                                true, 1.0)
-                               .bearing_width;
-    const double width100 = wardogs::ghost_style(GhostColorPreset::red, 80, 100,
-                                                 0, true, 1.0)
-                                .bearing_width;
-    const double width225 = wardogs::ghost_style(GhostColorPreset::red, 80, 225,
-                                                 0, true, 1.0)
-                                .bearing_width;
-    check(width75 < width100 && width100 < width225,
-          "stroke presets increase the line width monotonically");
-    check(foreground_alpha(wardogs::ghost_style(GhostColorPreset::red, 20, 100,
-                                                0, true, 1.0)) <
-              foreground_alpha(wardogs::ghost_style(GhostColorPreset::red, 100,
-                                                    100, 0, true, 1.0)),
-          "opacity raises the foreground alpha monotonically");
-
-    for (const double scale : {0.5, 0.8333, 1.0, 2.0, 4.0}) {
-        const GhostStyle style = wardogs::ghost_style(
-            GhostColorPreset::red, 80, 100, 0, true, scale);
-        check(style.halo_width_delta > 0.0,
-              "the readability assist always adds a visible halo");
-        check(style.text_halo_offset >= 1.0 &&
-                  style.text_halo_offset < 0.15 * style.label_pixel_size,
-              "the text halo never blurs more than its glyph budget");
-    }
-    for (const double scale : {0.9, 1.0, 2.0, 4.0}) {
-        check(wardogs::ghost_style(GhostColorPreset::red, 80, 100, 0, true,
-                                   scale)
-                      .halo_width_delta >= 1.5,
-              "the halo stays at least 1.5 px on every real scale");
-    }
-
-    const GhostStyle scrim_off =
-        wardogs::ghost_style(GhostColorPreset::red, 80, 100, 0, false, 1.0);
-    const GhostStyle scrim_light =
-        wardogs::ghost_style(GhostColorPreset::red, 80, 100, 1, false, 1.0);
-    const GhostStyle scrim_strong =
-        wardogs::ghost_style(GhostColorPreset::red, 80, 100, 2, false, 1.0);
-    const GhostStyle scrim_clamped =
-        wardogs::ghost_style(GhostColorPreset::red, 80, 100, 9, false, 1.0);
-    check(!scrim_off.scrim_enabled && !scrim_off.scrim_bands &&
-              scrim_alpha(scrim_off) == 0,
-          "the default scrim adds no pixels at all");
-    check(scrim_light.scrim_enabled && !scrim_light.scrim_bands &&
-              scrim_alpha(scrim_light) >= 20 && scrim_alpha(scrim_light) <= 40,
-          "the light scrim only plates the labels");
-    check(scrim_strong.scrim_enabled && scrim_strong.scrim_bands &&
-              scrim_alpha(scrim_strong) >= 55 && scrim_alpha(scrim_strong) <= 75,
-          "the strong scrim adds the narrow rail band");
-    check(scrim_clamped.scrim_bands &&
-              scrim_alpha(scrim_clamped) == scrim_alpha(scrim_strong),
-          "out of range scrim levels clamp to the strongest preset");
-    check(scrim_alpha(scrim_light) < halo_alpha(scrim_off) &&
-              scrim_alpha(scrim_strong) < halo_alpha(scrim_off),
-          "the scrim plate never overpowers the outline");
-
-    for (const auto preset :
-         {GhostColorPreset::red, GhostColorPreset::cyan,
-          GhostColorPreset::green, GhostColorPreset::yellow,
-          GhostColorPreset::white}) {
-        const auto parsed = wardogs::ghost_color_preset_from_name(
-            wardogs::ghost_color_preset_name(preset));
-        check(parsed && *parsed == preset,
-              "every color preset survives its persisted name round trip");
-    }
-    check(!wardogs::ghost_color_preset_from_name(L"") &&
-              !wardogs::ghost_color_preset_from_name(L"magenta"),
-          "an unknown persisted preset falls back instead of picking the first");
-    check(wardogs::ghost_color_preset_from_name(L"violet") ==
-                  GhostColorPreset::green &&
-              wardogs::ghost_color_preset_from_name(L"amber") ==
-                  GhostColorPreset::yellow,
-          "old local pastel preset names migrate to the new vivid presets");
-
-    const auto bearing_point = wardogs::ghost_bearing_read_point();
-    check(near(bearing_point[0], 480.0) && near(bearing_point[1], 88.0),
-          "the bearing read point sits on the measured center baseline");
-    const auto mil_point = wardogs::ghost_mil_read_point();
-    check(near(mil_point[0], 790.0) && near(mil_point[1], 360.0),
-          "the MIL read point sits on the measured rail center");
-    check(mil_point[1] >= wardogs::ghost_mil_top &&
-              mil_point[1] <= wardogs::ghost_mil_bottom,
-          "the MIL read point can never be clipped away");
-
-    double max_halo_offset = 0.0;
-    for (const auto& offset : wardogs::ghost_text_halo_offsets(2.0)) {
-        max_halo_offset = std::max(
-            max_halo_offset,
-            std::max(std::abs(offset[0]), std::abs(offset[1])));
-    }
-    check(near(max_halo_offset, 2.0, 1e-9),
-          "eight-direction text halos stay inside the requested distance");
+    const auto plain = wardogs::ghost_style(3, 100, 59, 80, 27, 16,
+                                             false, 1.0);
+    check(near(plain.line_width, 2.7) && !plain.outline_enabled &&
+              near(plain.outline_width, 0.0),
+          "line width is stored and rendered directly in pixels");
+    const auto outlined = wardogs::ghost_style(200, 90, 55, 80, 35, 20,
+                                                true, 1.0);
+    check(near(outlined.line_width, 3.5) && outlined.outline_enabled &&
+              near(outlined.outline_width, 2.0),
+          "outline width is independently configurable in pixels");
+    const auto clamped = wardogs::ghost_style(-10, 200, -5, 1, 999, 999,
+                                               true, 1.0);
+    check(near(clamped.line_width, 6.0) && near(clamped.outline_width, 4.0),
+          "out-of-range style values clamp to usable limits");
 
     std::cout << "All ghost reticle tests passed\n";
     return 0;
