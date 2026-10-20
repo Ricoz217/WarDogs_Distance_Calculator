@@ -4,6 +4,7 @@
 #include "settings_dialog.hpp"
 #include "vehicle_solution_widget.hpp"
 #include "window_title_bar.hpp"
+#include "main_window_sizing.hpp"
 
 #include <Windows.h>
 
@@ -44,6 +45,24 @@ void check(bool condition, const char* message) {
 int main(int argc, char* argv[]) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
+    MainWindowSizing window_sizing;
+    const QSize mortar_minimum = MainWindowSizing::minimum_for_content(
+        QSize(600, 510), QSize(500, 40));
+    const QSize vehicle_minimum = MainWindowSizing::minimum_for_content(
+        QSize(700, 890), QSize(500, 40));
+    check(mortar_minimum == QSize(606, 556) &&
+              vehicle_minimum == QSize(706, 936),
+          "each mode derives its minimum window size from visible content");
+    check(window_sizing.preferred(false, mortar_minimum) == mortar_minimum &&
+              window_sizing.preferred(true, vehicle_minimum) == vehicle_minimum,
+          "an unseen mode starts at its own content-sized minimum");
+    window_sizing.remember(false, QSize(680, 640));
+    window_sizing.remember(true, QSize(820, 1040));
+    check(window_sizing.preferred(false, mortar_minimum) == QSize(680, 640) &&
+              window_sizing.preferred(true, vehicle_minimum) == QSize(820, 1040),
+          "mortar and SPH-2 remember independent user sizes");
+    check(window_sizing.preferred(false, QSize(720, 700)) == QSize(720, 700),
+          "a newly required content minimum overrides an older smaller size");
     check(!wardogs_application_icon().isNull(),
           "the application icon is available to windows and title bars");
 

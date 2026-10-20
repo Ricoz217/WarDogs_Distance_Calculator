@@ -1,4 +1,5 @@
 #include "main_window.hpp"
+#include "main_window_sizing.hpp"
 #include "app_icon.hpp"
 #include "selection_overlay.hpp"
 #include "settings_dialog.hpp"
@@ -317,8 +318,6 @@ public:
         }
         setWindowTitle(QStringLiteral("War Dogs 射表计算"));
         resize(620, 610);
-        setMinimumWidth(560);
-        setMinimumHeight(460);
         terrain_discovery_ = wardogs::discover_terrain_maps(
             wardogs::default_terrain_directory());
         build_ui();
@@ -413,6 +412,7 @@ private:
     bool ghost_enabled_{};
     bool failure_state_{};
     int next_calibration_shot_{1};
+    MainWindowSizing window_sizing_;
     QFrame* app_frame_{};
     QLabel *base_summary_{}, *target_summary_{}, *distance_{}, *bearing_{},
         *mortar_mil_{};
@@ -757,6 +757,7 @@ private:
     }
 
     void toggle_mode() {
+        window_sizing_.remember(vehicle_mode_, size());
         vehicle_mode_ = !vehicle_mode_;
         update_mode_button();
         terrain_group_->setVisible(vehicle_mode_);
@@ -776,30 +777,29 @@ private:
         }
         sync_pinned_result();
         sync_ghost_solution();
-        fit_window_to_content(true);
-        QTimer::singleShot(0, this, [this] { fit_window_to_content(true); });
+        fit_window_to_content();
+        QTimer::singleShot(0, this, [this] { fit_window_to_content(); });
     }
 
-    void fit_window_to_content(bool preserve_existing_size = false) {
-        const QSize existing_size = size();
+    void fit_window_to_content() {
         app_frame_->layout()->activate();
-        app_frame_->adjustSize();
-        adjustSize();
-        const auto hint = sizeHint();
-        const int available_height = screen()
-            ? screen()->availableGeometry().height() - 48 : hint.height();
-        const auto* content = findChild<QWidget*>(QStringLiteral("mainContent"));
-        const auto* title_bar = findChild<QWidget*>(QStringLiteral("windowTitleBar"));
-        const int natural_height = content && title_bar
-            ? content->sizeHint().height() + title_bar->sizeHint().height() + 6
-            : hint.height();
-        const int target_height = std::max(
-            610, std::min(natural_height, available_height));
-        const QSize natural_size{
-            std::max(vehicle_mode_ ? 720 : 620, hint.width()), target_height};
-        resize(preserve_existing_size
-                   ? existing_size.expandedTo(minimumSize())
-                   : natural_size.expandedTo(minimumSize()));
+        auto* content = findChild<QWidget*>(QStringLiteral("mainContent"));
+        auto* title_bar = findChild<QWidget*>(QStringLiteral("windowTitleBar"));
+        if (!content || !title_bar) return;
+        if (content->layout()) {
+            content->layout()->invalidate();
+            content->layout()->activate();
+        }
+        content->updateGeometry();
+
+        const QSize content_size = content->sizeHint();
+        const QSize title_size = title_bar->sizeHint();
+        const QSize required_size = MainWindowSizing::minimum_for_content(
+            content_size, title_size);
+        setMinimumSize(required_size);
+
+        resize(window_sizing_.preferred(vehicle_mode_, required_size));
+        window_sizing_.remember(vehicle_mode_, size());
     }
 
     void update_terrain_summary(std::optional<double> height_delta = std::nullopt) {
