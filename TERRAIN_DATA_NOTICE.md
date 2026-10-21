@@ -1,20 +1,15 @@
 # Terrain data notice
 
 The optional `bakurani.wdt`, `ozeti.wdt`, and `zestafona.wdt` files contain
-quantized elevation samples derived from WARDOGS game data. The underlying game
-assets and terrain data are the property of BULKHEAD.
+quantized elevation samples independently parsed and converted by War Dogs
+Distance Calculator from WARDOGS terrain data for research and calibration.
+The converter retains a 2 metre horizontal grid, quantizes height to 0.1 metre
+units, and stores the samples in a chunked `.wdt` format with Zstandard
+compression. The files contain elevation samples and package metadata; they do
+not contain map imagery.
 
-The source Terrain3D snapshot was extracted and processed by Apollyon for
-**WARDOGS Artillery Calculator**, an unofficial community project:
-
-- Project: https://wardogs-artillery.com/
-
-The snapshot was supplied directly by Apollyon as a one-time exception and
-includes the Season 2 Bakurani update. War Dogs Distance Calculator retained the
-2 metre horizontal grid, quantized height to 0.1 metre units, and re-encoded the
-samples in its own chunked `.wdt` format with Zstandard compression. The `.wdt`
-files contain elevation samples and package metadata; they do not contain map
-imagery.
+The underlying game assets and terrain data are the property of BULKHEAD. War
+Dogs Distance Calculator does not claim ownership of them.
 
 The MIT License in the War Dogs Distance Calculator repository applies to the
 project's source code and other original material covered by that license. It
@@ -26,6 +21,17 @@ sublicensing, or sale.
 These terrain datasets are not published through the project's source-code
 repository or GitHub Releases and are not offered as unrestricted public
 downloads. This project does not sell the terrain data.
+
+## Software attribution
+
+War Dogs Distance Calculator uses algorithms and source code from **WARDOGS
+Artillery Calculator**, an unofficial community project by Apollyon:
+
+- Project: https://wardogs-artillery.com/
+
+This attribution applies to the software work. It does not identify WARDOGS
+Artillery Calculator or its author as the source, publisher, or rights holder of
+the `.wdt` terrain data in this package.
 
 War Dogs Distance Calculator is an unofficial fan-made utility and is not
 affiliated with, endorsed by, or officially associated with BULKHEAD or the
