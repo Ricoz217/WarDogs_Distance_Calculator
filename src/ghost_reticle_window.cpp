@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -27,10 +28,67 @@ QString normalized_monitor_name(QString name) {
     return name;
 }
 
-QColor ghost_color(int opacity_percent) {
-    QColor color(QStringLiteral("#ff3b30"));
-    color.setAlphaF(std::clamp(opacity_percent, 20, 100) / 100.0);
+QFont ghost_font(double pixel_size) {
+    QFont font(QStringLiteral("Microsoft YaHei UI"));
+    font.setPixelSize(std::max(1, qRound(pixel_size)));
+    font.setWeight(QFont::Bold);
+    return font;
+}
+
+QColor ghost_qcolor(std::uint32_t argb) {
+    QColor color;
+    color.setRgba(argb);
     return color;
+}
+
+QPen ghost_line_pen(std::uint32_t argb, double width) {
+    return QPen(ghost_qcolor(argb), width, Qt::SolidLine, Qt::SquareCap);
+}
+
+struct GhostTextLabel {
+    QRectF rect;
+    int flags{};
+    QString text;
+};
+
+void draw_label_halo(QPainter& painter,
+                     const std::vector<GhostTextLabel>& labels,
+                     const QColor& halo, double offset) {
+    painter.setPen(halo);
+    for (const auto& shift : wardogs::ghost_text_halo_offsets(offset)) {
+        for (const auto& label : labels) {
+            painter.drawText(label.rect.translated(shift[0], shift[1]),
+                             label.flags, label.text);
+        }
+    }
+}
+
+void draw_labels(QPainter& painter, const std::vector<GhostTextLabel>& labels,
+                 const QColor& color) {
+    painter.setPen(color);
+    for (const auto& label : labels)
+        painter.drawText(label.rect, label.flags, label.text);
+}
+
+// Lines are stroked as one grouped path so every tick root fuses with the
+// baseline of the outline pass; stroking tick-by-tick would let each later
+// halo bite a notch into the already painted foreground rail.
+void paint_ghost_figure(QPainter& painter, const wardogs::GhostStyle& style,
+                        const QFont& font, const QPainterPath& path,
+                        const std::vector<GhostTextLabel>& labels) {
+    painter.setFont(font);
+    const QColor foreground = ghost_qcolor(style.foreground);
+    const QColor outline = ghost_qcolor(style.outline);
+    if (style.outline_enabled) {
+        painter.strokePath(path, ghost_line_pen(
+                                     style.outline,
+                                     style.line_width +
+                                         2.0 * style.outline_width));
+    }
+    painter.strokePath(path, ghost_line_pen(style.foreground, style.line_width));
+    if (style.outline_enabled)
+        draw_label_halo(painter, labels, outline, style.outline_width);
+    draw_labels(painter, labels, foreground);
 }
 
 QIcon adjustment_icon(bool confirm) {
@@ -55,23 +113,46 @@ QIcon adjustment_icon(bool confirm) {
 
 }  // namespace
 
+GhostReticleWindow::Preferences GhostReticleWindow::clamped(
+    Preferences preferences) {
+    preferences.opacity_percent = std::clamp(
+        preferences.opacity_percent, Preferences::minimum_opacity_percent,
+        Preferences::maximum_opacity_percent);
+    preferences.width = std::clamp(
+        preferences.width, Preferences::minimum_width,
+        Preferences::maximum_width);
+    preferences.bearing_compensation_deg = std::clamp(
+        preferences.bearing_compensation_deg,
+        Preferences::minimum_bearing_compensation_deg,
+        Preferences::maximum_bearing_compensation_deg);
+    preferences.line_width_tenths = std::clamp(
+        preferences.line_width_tenths,
+        Preferences::minimum_line_width_tenths,
+        Preferences::maximum_line_width_tenths);
+    preferences.outline_width_tenths = std::clamp(
+        preferences.outline_width_tenths,
+        Preferences::minimum_outline_width_tenths,
+        Preferences::maximum_outline_width_tenths);
+    preferences.color_hue = std::clamp(
+        preferences.color_hue, Preferences::minimum_hue,
+        Preferences::maximum_hue);
+    preferences.color_saturation = std::clamp(
+        preferences.color_saturation, Preferences::minimum_color_percent,
+        Preferences::maximum_color_percent);
+    preferences.color_lightness = std::clamp(
+        preferences.color_lightness, Preferences::minimum_color_percent,
+        Preferences::maximum_color_percent);
+    return preferences;
+}
+
 GhostReticleWindow::GhostReticleWindow(Preferences preferences,
                                        SizeSaved size_saved,
                                        QWidget* parent)
     : QWidget(parent, Qt::Tool | Qt::FramelessWindowHint |
                           Qt::WindowStaysOnTopHint |
                           Qt::WindowDoesNotAcceptFocus),
-      preferences_(preferences), size_saved_(std::move(size_saved)) {
-    preferences_.opacity_percent = std::clamp(
-        preferences_.opacity_percent, Preferences::minimum_opacity_percent,
-        Preferences::maximum_opacity_percent);
-    preferences_.width = std::clamp(
-        preferences_.width, Preferences::minimum_width,
-        Preferences::maximum_width);
-    preferences_.bearing_compensation_deg = std::clamp(
-        preferences_.bearing_compensation_deg,
-        Preferences::minimum_bearing_compensation_deg,
-        Preferences::maximum_bearing_compensation_deg);
+      preferences_(clamped(std::move(preferences))),
+      size_saved_(std::move(size_saved)) {
     setObjectName(QStringLiteral("ghostReticleWindow"));
     setAttribute(Qt::WA_TranslucentBackground);
     setAttribute(Qt::WA_ShowWithoutActivating);
@@ -82,12 +163,7 @@ GhostReticleWindow::GhostReticleWindow(Preferences preferences,
         QStringLiteral("ghostReticleAdjustmentControls"));
     adjustment_controls_->setAttribute(Qt::WA_StyledBackground);
     adjustment_controls_->setFixedSize(112, 42);
-    adjustment_controls_->setStyleSheet(QStringLiteral(
-        "QWidget#ghostReticleAdjustmentControls{background:rgba(11,16,24,210);"
-        "border:1px solid #ff3b30;border-radius:9px;}"
-        "QToolButton{background:transparent;color:#f8fafc;border:0;"
-        "font-size:22px;font-weight:700;}"
-        "QToolButton:hover{background:rgba(255,59,48,70);border-radius:6px;}"));
+    apply_adjustment_controls_style();
     auto* adjustment_layout = new QHBoxLayout(adjustment_controls_);
     adjustment_layout->setContentsMargins(5, 4, 5, 4);
     adjustment_layout->setSpacing(4);
@@ -113,6 +189,25 @@ GhostReticleWindow::GhostReticleWindow(Preferences preferences,
 
     center_on_screen(preferences_.width);
     apply_input_mode();
+}
+
+void GhostReticleWindow::apply_adjustment_controls_style() {
+    if (!adjustment_controls_) return;
+    const auto rgb = wardogs::ghost_hsl_rgb(
+        preferences_.color_hue, preferences_.color_saturation,
+        preferences_.color_lightness);
+    const QColor accent(rgb[0], rgb[1], rgb[2]);
+    adjustment_controls_->setStyleSheet(
+        QStringLiteral(
+            "QWidget#ghostReticleAdjustmentControls{background:rgba(11,16,24,210);"
+            "border:1px solid %1;border-radius:9px;}"
+            "QToolButton{background:transparent;color:#f8fafc;border:0;"
+            "font-size:22px;font-weight:700;}"
+            "QToolButton:hover{background:rgba(%2,%3,%4,70);border-radius:6px;}")
+            .arg(accent.name())
+            .arg(rgb[0])
+            .arg(rgb[1])
+            .arg(rgb[2]));
 }
 
 void GhostReticleWindow::set_solution(
@@ -159,24 +254,15 @@ void GhostReticleWindow::set_overlay_enabled(bool enabled) {
     update();
 }
 
-void GhostReticleWindow::set_opacity_percent(int opacity_percent) {
-    preferences_.opacity_percent = std::clamp(
-        opacity_percent, Preferences::minimum_opacity_percent,
-        Preferences::maximum_opacity_percent);
-    update();
-}
-
-void GhostReticleWindow::set_bearing_compensation(double degrees) {
-    preferences_.bearing_compensation_deg = std::clamp(
-        degrees, Preferences::minimum_bearing_compensation_deg,
-        Preferences::maximum_bearing_compensation_deg);
-    update();
-}
-
-void GhostReticleWindow::set_width(int width) {
-    preferences_.width = std::clamp(
-        width, Preferences::minimum_width, Preferences::maximum_width);
-    center_on_screen(preferences_.width);
+void GhostReticleWindow::set_preferences(const Preferences& preferences) {
+    const Preferences previous = preferences_;
+    preferences_ = clamped(preferences);
+    if (preferences_.width != previous.width)
+        center_on_screen(preferences_.width);
+    if (preferences_.color_hue != previous.color_hue ||
+        preferences_.color_saturation != previous.color_saturation ||
+        preferences_.color_lightness != previous.color_lightness)
+        apply_adjustment_controls_style();
     update();
 }
 
@@ -322,24 +408,32 @@ void GhostReticleWindow::paintEvent(QPaintEvent* event) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing);
     const double scale = width() / wardogs::ghost_base_width;
+    const wardogs::GhostStyle style = wardogs::ghost_style(
+        preferences_.color_hue, preferences_.color_saturation,
+        preferences_.color_lightness, preferences_.opacity_percent,
+        preferences_.line_width_tenths, preferences_.outline_width_tenths,
+        preferences_.outline_enabled, scale);
 
     if ((overlay_enabled_ || adjusting_) && solution_) {
-        draw_bearing(painter, scale, solution_->bearing_deg);
-        draw_mil(painter, scale);
+        draw_bearing(painter, style, scale, solution_->bearing_deg);
+        draw_mil(painter, style, scale);
     } else if ((overlay_enabled_ || adjusting_) && mortar_bearing_ &&
                mortar_mil_) {
-        draw_bearing(painter, scale, *mortar_bearing_);
-        draw_mortar_mil(painter, scale);
+        draw_bearing(painter, style, scale, *mortar_bearing_);
+        draw_mortar_mil(painter, style, scale);
     }
 
     if (adjusting_) {
-        painter.setPen(QPen(QColor(QStringLiteral("#ff3b30")),
-                            std::max(2.0, 2.5 * scale)));
+        const auto rgb = wardogs::ghost_hsl_rgb(
+            preferences_.color_hue, preferences_.color_saturation,
+            preferences_.color_lightness);
+        painter.setPen(QPen(QColor(rgb[0], rgb[1], rgb[2]),
+                            style.frame_width));
         painter.setBrush(Qt::NoBrush);
         painter.drawRect(QRectF(rect()).adjusted(1.0, 1.0, -1.0, -1.0));
         painter.setPen(QColor(QStringLiteral("#e2e8f0")));
         QFont font(QStringLiteral("Microsoft YaHei UI"));
-        font.setPixelSize(std::max(12, qRound(14 * scale)));
+        font.setPixelSize(qRound(style.hint_pixel_size));
         painter.setFont(font);
         painter.drawText(QRectF(12 * scale, 10 * scale, 450 * scale,
                                 28 * scale),
@@ -347,90 +441,100 @@ void GhostReticleWindow::paintEvent(QPaintEvent* event) {
     }
 }
 
-void GhostReticleWindow::draw_bearing(QPainter& painter, double scale,
+void GhostReticleWindow::draw_bearing(QPainter& painter,
+                                      const wardogs::GhostStyle& style,
+                                      double scale,
                                       double bearing_degrees) const {
-    const QColor color = ghost_color(preferences_.opacity_percent);
-    painter.setPen(QPen(color, std::max(2.0, 2.6 * scale),
-                        Qt::SolidLine, Qt::SquareCap));
-    const double baseline = 88.0 * scale;
-    painter.drawLine(QPointF(wardogs::ghost_bearing_left * scale, baseline),
-                     QPointF(wardogs::ghost_bearing_right * scale, baseline));
-    QFont font(QStringLiteral("Microsoft YaHei UI"));
-    font.setPixelSize(std::max(12, qRound(17 * scale)));
-    font.setWeight(QFont::Bold);
-    painter.setFont(font);
+    painter.save();
+    const double baseline = wardogs::ghost_bearing_baseline_y * scale;
+    const double game_bearing = wardogs::ghost_game_bearing(
+        bearing_degrees, preferences_.bearing_compensation_deg);
+
+    QPainterPath path;
+    path.moveTo(wardogs::ghost_bearing_left * scale, baseline);
+    path.lineTo(wardogs::ghost_bearing_right * scale, baseline);
+
+    std::vector<GhostTextLabel> labels;
+    const QFont font = ghost_font(style.label_pixel_size);
     for (const auto& tick :
-         wardogs::ghost_bearing_ticks(
-             wardogs::ghost_game_bearing(
-                 bearing_degrees,
-                 preferences_.bearing_compensation_deg))) {
+         wardogs::ghost_bearing_ticks(game_bearing)) {
         const double x = tick.position * scale;
         const double length = (tick.major ? 25.0 : 14.0) * scale;
-        painter.drawLine(QPointF(x, baseline), QPointF(x, baseline - length));
+        path.moveTo(x, baseline);
+        path.lineTo(x, baseline - length);
         if (tick.major) {
-            painter.drawText(QRectF(x - 30 * scale, baseline + 4 * scale,
-                                    60 * scale, 26 * scale),
-                             Qt::AlignHCenter | Qt::AlignTop,
-                             QString::number(tick.value));
+            labels.push_back(GhostTextLabel{
+                QRectF(x - 30 * scale, baseline + 4 * scale,
+                       60 * scale, 26 * scale),
+                Qt::AlignHCenter | Qt::AlignTop,
+                QString::number(tick.value)});
         }
     }
+
+    paint_ghost_figure(painter, style, font, path, labels);
+    painter.restore();
 }
 
-void GhostReticleWindow::draw_mil(QPainter& painter, double scale) const {
-    const QColor color = ghost_color(preferences_.opacity_percent);
+void GhostReticleWindow::draw_mil(QPainter& painter,
+                                  const wardogs::GhostStyle& style,
+                                  double scale) const {
+    if (!solution_) return;
     painter.save();
     painter.setClipRect(QRectF(0, wardogs::ghost_mil_top * scale,
                                width(),
                                (wardogs::ghost_mil_bottom -
                                 wardogs::ghost_mil_top) * scale));
-    painter.setPen(QPen(color, std::max(2.0, 2.7 * scale),
-                        Qt::SolidLine, Qt::SquareCap));
-    QFont font(QStringLiteral("Microsoft YaHei UI"));
-    font.setPixelSize(std::max(12, qRound(17 * scale)));
-    font.setWeight(QFont::Bold);
-    painter.setFont(font);
-    const double rail_x = 790.0 * scale;
+    const double rail_x = wardogs::ghost_mil_rail_x * scale;
+
+    QPainterPath path;
+    std::vector<GhostTextLabel> labels;
+    const QFont font = ghost_font(style.label_pixel_size);
     for (const auto& tick : wardogs::ghost_mil_ticks(solution_->mil)) {
         const double y = tick.position * scale;
-        painter.drawLine(QPointF(rail_x, y),
-                         QPointF(rail_x + 26 * scale, y));
-        painter.drawLine(QPointF(rail_x, y - 7 * scale),
-                         QPointF(rail_x, y + 7 * scale));
-        painter.drawText(QRectF(rail_x - 126 * scale, y - 14 * scale,
-                                116 * scale, 28 * scale),
-                         Qt::AlignRight | Qt::AlignVCenter,
-                         QStringLiteral("%1 mils").arg(tick.value));
+        path.moveTo(rail_x, y);
+        path.lineTo(rail_x + 26 * scale, y);
+        path.moveTo(rail_x, y - 7 * scale);
+        path.lineTo(rail_x, y + 7 * scale);
+        labels.push_back(GhostTextLabel{
+            QRectF(rail_x - 126 * scale, y - 14 * scale,
+                   116 * scale, 28 * scale),
+            Qt::AlignRight | Qt::AlignVCenter,
+            QStringLiteral("%1 mils").arg(tick.value)});
     }
+
+    paint_ghost_figure(painter, style, font, path, labels);
     painter.restore();
 }
 
 void GhostReticleWindow::draw_mortar_mil(QPainter& painter,
-                                          double scale) const {
-    const QColor color = ghost_color(preferences_.opacity_percent);
+                                         const wardogs::GhostStyle& style,
+                                         double scale) const {
+    if (!mortar_mil_) return;
     painter.save();
     painter.setClipRect(QRectF(0, wardogs::ghost_mil_top * scale,
                                width(),
                                (wardogs::ghost_mil_bottom -
                                 wardogs::ghost_mil_top) * scale));
-    painter.setPen(QPen(color, std::max(2.0, 2.7 * scale),
-                        Qt::SolidLine, Qt::SquareCap));
-    QFont font(QStringLiteral("Microsoft YaHei UI"));
-    font.setPixelSize(std::max(12, qRound(17 * scale)));
-    font.setWeight(QFont::Bold);
-    painter.setFont(font);
-    const double rail_x = 790.0 * scale;
+    const double rail_x = wardogs::ghost_mil_rail_x * scale;
+
+    QPainterPath path;
+    std::vector<GhostTextLabel> labels;
+    const QFont font = ghost_font(style.label_pixel_size);
     for (const auto& tick :
          wardogs::ghost_mortar_mil_ticks(*mortar_mil_)) {
         const double y = tick.position * scale;
-        painter.drawLine(QPointF(rail_x, y),
-                         QPointF(rail_x + 26 * scale, y));
-        painter.drawLine(QPointF(rail_x, y - 7 * scale),
-                         QPointF(rail_x, y + 7 * scale));
-        painter.drawText(QRectF(rail_x - 86 * scale, y - 14 * scale,
-                                76 * scale, 28 * scale),
-                         Qt::AlignRight | Qt::AlignVCenter,
-                         QString::number(tick.value));
+        path.moveTo(rail_x, y);
+        path.lineTo(rail_x + 26 * scale, y);
+        path.moveTo(rail_x, y - 7 * scale);
+        path.lineTo(rail_x, y + 7 * scale);
+        labels.push_back(GhostTextLabel{
+            QRectF(rail_x - 86 * scale, y - 14 * scale,
+                   76 * scale, 28 * scale),
+            Qt::AlignRight | Qt::AlignVCenter,
+            QString::number(tick.value)});
     }
+
+    paint_ghost_figure(painter, style, font, path, labels);
     painter.restore();
 }
 

@@ -129,6 +129,61 @@ AppSettings load_settings_from(const std::filesystem::path& path) {
     settings.ghost_reticle.preferred_arc =
         read_value(path, L"ghost_reticle_preferred_arc", L"low") == L"high"
             ? Arc::high : Arc::low;
+    if (const auto width = read_integer(path, L"ghost_reticle_line_width_tenths")) {
+        settings.ghost_reticle.line_width_tenths = static_cast<int>(std::clamp(
+            *width,
+            static_cast<long>(GhostReticlePreferences::minimum_line_width_tenths),
+            static_cast<long>(GhostReticlePreferences::maximum_line_width_tenths)));
+    } else if (const auto legacy = read_integer(
+                   path, L"ghost_reticle_stroke_scale_percent")) {
+        settings.ghost_reticle.line_width_tenths = static_cast<int>(std::clamp(
+            std::lround(27.0 * *legacy / 100.0),
+            static_cast<long>(GhostReticlePreferences::minimum_line_width_tenths),
+            static_cast<long>(GhostReticlePreferences::maximum_line_width_tenths)));
+    }
+    if (const auto width = read_integer(path, L"ghost_reticle_outline_width_tenths"))
+        settings.ghost_reticle.outline_width_tenths = static_cast<int>(std::clamp(
+            *width,
+            static_cast<long>(GhostReticlePreferences::minimum_outline_width_tenths),
+            static_cast<long>(GhostReticlePreferences::maximum_outline_width_tenths)));
+    const auto outline = read_value(path, L"ghost_reticle_outline_enabled", L"");
+    settings.ghost_reticle.outline_enabled = outline.empty()
+        ? read_value(path, L"ghost_reticle_readability", L"0") == L"1"
+        : outline == L"1";
+    if (const auto hue = read_integer(path, L"ghost_reticle_color_hue"))
+        settings.ghost_reticle.color_hue = static_cast<int>(std::clamp(
+            *hue, static_cast<long>(GhostReticlePreferences::minimum_hue),
+            static_cast<long>(GhostReticlePreferences::maximum_hue)));
+    if (const auto saturation = read_integer(path, L"ghost_reticle_color_saturation"))
+        settings.ghost_reticle.color_saturation = static_cast<int>(std::clamp(
+            *saturation,
+            static_cast<long>(GhostReticlePreferences::minimum_color_percent),
+            static_cast<long>(GhostReticlePreferences::maximum_color_percent)));
+    if (const auto lightness = read_integer(path, L"ghost_reticle_color_lightness"))
+        settings.ghost_reticle.color_lightness = static_cast<int>(std::clamp(
+            *lightness,
+            static_cast<long>(GhostReticlePreferences::minimum_color_percent),
+            static_cast<long>(GhostReticlePreferences::maximum_color_percent)));
+    if (!read_integer(path, L"ghost_reticle_color_hue")) {
+        const auto legacy = read_value(path, L"ghost_reticle_color_preset", L"red");
+        if (legacy == L"green" || legacy == L"violet") {
+            settings.ghost_reticle.color_hue = 145;
+            settings.ghost_reticle.color_saturation = 100;
+            settings.ghost_reticle.color_lightness = 39;
+        } else if (legacy == L"cyan") {
+            settings.ghost_reticle.color_hue = 187;
+            settings.ghost_reticle.color_saturation = 100;
+            settings.ghost_reticle.color_lightness = 42;
+        } else if (legacy == L"yellow" || legacy == L"amber") {
+            settings.ghost_reticle.color_hue = 50;
+            settings.ghost_reticle.color_saturation = 100;
+            settings.ghost_reticle.color_lightness = 50;
+        } else if (legacy == L"white") {
+            settings.ghost_reticle.color_hue = 0;
+            settings.ghost_reticle.color_saturation = 0;
+            settings.ghost_reticle.color_lightness = 100;
+        }
+    }
     const std::wstring monitor = read_value(path, L"capture_monitor", L"");
     const auto left = read_integer(path, L"capture_left");
     const auto top = read_integer(path, L"capture_top");
@@ -187,6 +242,33 @@ void save_settings_to(const std::filesystem::path& path,
     write_value(path, L"ghost_reticle_preferred_arc",
                 settings.ghost_reticle.preferred_arc == Arc::high
                     ? L"high" : L"low");
+    write_value(path, L"ghost_reticle_line_width_tenths",
+                std::to_wstring(std::clamp(
+                    settings.ghost_reticle.line_width_tenths,
+                    GhostReticlePreferences::minimum_line_width_tenths,
+                    GhostReticlePreferences::maximum_line_width_tenths)));
+    write_value(path, L"ghost_reticle_outline_width_tenths",
+                std::to_wstring(std::clamp(
+                    settings.ghost_reticle.outline_width_tenths,
+                    GhostReticlePreferences::minimum_outline_width_tenths,
+                    GhostReticlePreferences::maximum_outline_width_tenths)));
+    write_value(path, L"ghost_reticle_outline_enabled",
+                settings.ghost_reticle.outline_enabled ? L"1" : L"0");
+    write_value(path, L"ghost_reticle_color_hue",
+                std::to_wstring(std::clamp(
+                    settings.ghost_reticle.color_hue,
+                    GhostReticlePreferences::minimum_hue,
+                    GhostReticlePreferences::maximum_hue)));
+    write_value(path, L"ghost_reticle_color_saturation",
+                std::to_wstring(std::clamp(
+                    settings.ghost_reticle.color_saturation,
+                    GhostReticlePreferences::minimum_color_percent,
+                    GhostReticlePreferences::maximum_color_percent)));
+    write_value(path, L"ghost_reticle_color_lightness",
+                std::to_wstring(std::clamp(
+                    settings.ghost_reticle.color_lightness,
+                    GhostReticlePreferences::minimum_color_percent,
+                    GhostReticlePreferences::maximum_color_percent)));
     if (settings.capture_region) {
         const auto& region = *settings.capture_region;
         write_value(path, L"capture_monitor", region.monitor_device);

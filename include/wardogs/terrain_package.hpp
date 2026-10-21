@@ -35,11 +35,13 @@ struct TerrainMapSpec {
     std::wstring display_name;
     std::filesystem::path filename;
     std::string sha256;
+    std::vector<std::string> outdated_sha256;
 };
 
 struct InstalledTerrainMap {
     TerrainMapSpec spec;
     std::filesystem::path path;
+    bool outdated{};
 };
 
 struct TerrainDiscovery {

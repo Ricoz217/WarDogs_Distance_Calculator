@@ -321,11 +321,14 @@ std::filesystem::path default_terrain_directory() {
 const std::vector<TerrainMapSpec>& official_terrain_maps() {
     static const std::vector<TerrainMapSpec> maps{
         {"bakurani", L"Bakurani", L"bakurani.wdt",
-         "9c79af2f69df5023f6e2e944329ae80981432e7115832ae801da067bd79bfdde"},
+         "528a6a4f31235eef1d23e2a8f728dd34b1d261d7a80b6074f410b98fc615bb70",
+         {"9c79af2f69df5023f6e2e944329ae80981432e7115832ae801da067bd79bfdde"}},
         {"ozeti", L"Ozeti", L"ozeti.wdt",
-         "f636225e89ffe19111da58466d4db60e4ccff285c3cfa11d8c30b959f544c400"},
+         "242966d4469943aea700f5b7dc16873a18780bad63d2037e783fe7ebbc12e2ab",
+         {"f636225e89ffe19111da58466d4db60e4ccff285c3cfa11d8c30b959f544c400"}},
         {"zestafona", L"Zestafona", L"zestafona.wdt",
-         "e60f95a6e23791164342fe51b465ac04238f338f1f4293aef664b61513ecc048"},
+         "b8ef09a8cfca85f5e377e347dbf9eec6550b9af9134a490726b0a8c18a032069",
+         {"e60f95a6e23791164342fe51b465ac04238f338f1f4293aef664b61513ecc048"}},
     };
     return maps;
 }
@@ -340,12 +343,17 @@ TerrainDiscovery discover_terrain_maps(const std::filesystem::path& directory,
             continue;
         }
         try {
-            if (sha256_file(path) != spec.sha256)
+            const auto digest = sha256_file(path);
+            const bool current = digest == spec.sha256;
+            const bool outdated = std::find(spec.outdated_sha256.begin(),
+                                              spec.outdated_sha256.end(),
+                                              digest) != spec.outdated_sha256.end();
+            if (!current && !outdated)
                 throw std::invalid_argument("SHA-256 校验失败");
             TerrainPackage package(path);
             if (package.map_id() != spec.map_id)
                 throw std::invalid_argument("地图标识不匹配");
-            result.installed.push_back({spec, path});
+            result.installed.push_back({spec, path, outdated});
         } catch (const std::exception& error) {
             result.problems.push_back(spec.display_name + L"：校验失败（" +
                                       widen(error.what()) + L"）");

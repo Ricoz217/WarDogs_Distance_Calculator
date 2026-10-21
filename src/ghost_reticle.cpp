@@ -1,6 +1,8 @@
 #include "wardogs/ghost_reticle.hpp"
 
+#include <algorithm>
 #include <cmath>
+#include <numbers>
 
 namespace wardogs {
 namespace {
@@ -9,12 +11,98 @@ constexpr double bearing_pixels_per_degree = 111.0 / 15.0;
 constexpr double mil_pixels_per_mil = 176.0 / 10.0;
 constexpr double mortar_pixels_per_mil = 136.0 / 50.0;
 
+constexpr double frame_stroke_pixels = 2.5;
+constexpr double minimum_stroke_pixels = 2.0;
+constexpr double label_font_pixels = 17.0;
+constexpr double hint_font_pixels = 14.0;
+constexpr double minimum_font_pixels = 12.0;
+constexpr std::array<int, 3> outline_rgb{11, 16, 24};
+
+std::uint32_t argb(int alpha, const std::array<int, 3>& rgb) {
+    return (static_cast<std::uint32_t>(std::clamp(alpha, 0, 255)) << 24) |
+           (static_cast<std::uint32_t>(rgb[0]) << 16) |
+           (static_cast<std::uint32_t>(rgb[1]) << 8) |
+           static_cast<std::uint32_t>(rgb[2]);
+}
+
 int normalized_bearing(int degrees) {
     const int value = degrees % 360;
     return value < 0 ? value + 360 : value;
 }
 
 }  // namespace
+
+std::array<int, 3> ghost_hsl_rgb(int hue, int saturation, int lightness) {
+    const int wrapped_hue = ((hue % 360) + 360) % 360;
+    const double h = wrapped_hue / 360.0;
+    const double s = std::clamp(saturation, 0, 100) / 100.0;
+    const double l = std::clamp(lightness, 0, 100) / 100.0;
+    if (s <= 1e-12) {
+        const int gray = static_cast<int>(std::lround(l * 255.0));
+        return {gray, gray, gray};
+    }
+    const double q = l < 0.5 ? l * (1.0 + s) : l + s - l * s;
+    const double p = 2.0 * l - q;
+    const auto channel = [p, q](double t) {
+        if (t < 0.0) t += 1.0;
+        if (t > 1.0) t -= 1.0;
+        double value = p;
+        if (t < 1.0 / 6.0)
+            value = p + (q - p) * 6.0 * t;
+        else if (t < 1.0 / 2.0)
+            value = q;
+        else if (t < 2.0 / 3.0)
+            value = p + (q - p) * (2.0 / 3.0 - t) * 6.0;
+        return static_cast<int>(std::lround(value * 255.0));
+    };
+    return {channel(h + 1.0 / 3.0), channel(h), channel(h - 1.0 / 3.0)};
+}
+
+GhostStyle ghost_style(int hue, int saturation, int lightness,
+                       int opacity_percent, int line_width_tenths,
+                       int outline_width_tenths, bool outline_enabled,
+                       double scale) {
+    const double opacity =
+        std::clamp(opacity_percent, GhostReticlePreferences::minimum_opacity_percent,
+                   GhostReticlePreferences::maximum_opacity_percent) /
+        100.0;
+    const double safe_scale = std::max(scale, 0.0);
+    const auto rgb = ghost_hsl_rgb(hue, saturation, lightness);
+
+    GhostStyle style;
+    style.foreground = argb(static_cast<int>(std::lround(255.0 * opacity)), rgb);
+    style.outline = argb(static_cast<int>(std::lround(255.0 * opacity)),
+                         outline_rgb);
+    style.line_width = std::clamp(
+        line_width_tenths,
+        GhostReticlePreferences::minimum_line_width_tenths,
+        GhostReticlePreferences::maximum_line_width_tenths) / 10.0;
+    style.outline_width = outline_enabled
+        ? std::clamp(outline_width_tenths,
+                     GhostReticlePreferences::minimum_outline_width_tenths,
+                     GhostReticlePreferences::maximum_outline_width_tenths) / 10.0
+        : 0.0;
+    style.frame_width =
+        std::max(minimum_stroke_pixels, frame_stroke_pixels * safe_scale);
+    style.label_pixel_size =
+        std::max(minimum_font_pixels, std::round(label_font_pixels * safe_scale));
+    style.hint_pixel_size =
+        std::max(minimum_font_pixels, std::round(hint_font_pixels * safe_scale));
+    style.outline_enabled = outline_enabled;
+    return style;
+}
+
+std::array<std::array<double, 2>, 8> ghost_text_halo_offsets(double distance) {
+    const double diagonal = distance / std::numbers::sqrt2;
+    return {{{0.0, -distance},
+             {0.0, distance},
+             {-distance, 0.0},
+             {distance, 0.0},
+             {-diagonal, -diagonal},
+             {diagonal, -diagonal},
+             {-diagonal, diagonal},
+             {diagonal, diagonal}}};
+}
 
 std::vector<GhostTick> ghost_bearing_ticks(double target_bearing_degrees) {
     std::vector<GhostTick> ticks;

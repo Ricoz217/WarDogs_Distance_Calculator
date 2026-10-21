@@ -112,6 +112,28 @@ int main() {
     check(!wardogs::ghost_preset_width(1920, 1200),
           "non-16:9 resolutions are not offered without measurements");
 
+    const auto red = wardogs::ghost_hsl_rgb(3, 100, 59);
+    check(red[0] >= 250 && red[1] >= 50 && red[1] <= 70 &&
+              red[2] >= 40 && red[2] <= 60,
+          "the default HSL color reproduces the existing red reticle");
+    check(red == wardogs::ghost_hsl_rgb(363, 100, 59),
+          "HSL hue wraps through 360 degrees");
+
+    const auto plain = wardogs::ghost_style(3, 100, 59, 80, 27, 16,
+                                             false, 1.0);
+    check(near(plain.line_width, 2.7) && !plain.outline_enabled &&
+              near(plain.outline_width, 0.0),
+          "line width is stored and rendered directly in pixels");
+    const auto outlined = wardogs::ghost_style(200, 90, 55, 80, 35, 20,
+                                                true, 1.0);
+    check(near(outlined.line_width, 3.5) && outlined.outline_enabled &&
+              near(outlined.outline_width, 2.0),
+          "outline width is independently configurable in pixels");
+    const auto clamped = wardogs::ghost_style(-10, 200, -5, 1, 999, 999,
+                                               true, 1.0);
+    check(near(clamped.line_width, 6.0) && near(clamped.outline_width, 4.0),
+          "out-of-range style values clamp to usable limits");
+
     std::cout << "All ghost reticle tests passed\n";
     return 0;
 }

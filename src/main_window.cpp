@@ -1,4 +1,5 @@
 #include "main_window.hpp"
+#include "main_window_sizing.hpp"
 #include "app_icon.hpp"
 #include "selection_overlay.hpp"
 #include "settings_dialog.hpp"
@@ -317,8 +318,6 @@ public:
         }
         setWindowTitle(QStringLiteral("War Dogs 射表计算"));
         resize(620, 610);
-        setMinimumWidth(560);
-        setMinimumHeight(610);
         terrain_discovery_ = wardogs::discover_terrain_maps(
             wardogs::default_terrain_directory());
         build_ui();
@@ -413,6 +412,7 @@ private:
     bool ghost_enabled_{};
     bool failure_state_{};
     int next_calibration_shot_{1};
+    MainWindowSizing window_sizing_;
     QFrame* app_frame_{};
     QLabel *base_summary_{}, *target_summary_{}, *distance_{}, *bearing_{},
         *mortar_mil_{};
@@ -757,6 +757,7 @@ private:
     }
 
     void toggle_mode() {
+        window_sizing_.remember(vehicle_mode_, size());
         vehicle_mode_ = !vehicle_mode_;
         update_mode_button();
         terrain_group_->setVisible(vehicle_mode_);
@@ -782,24 +783,30 @@ private:
 
     void fit_window_to_content() {
         app_frame_->layout()->activate();
-        app_frame_->adjustSize();
-        adjustSize();
-        const auto hint = sizeHint();
-        const int available_height = screen()
-            ? screen()->availableGeometry().height() - 48 : hint.height();
-        const auto* content = findChild<QWidget*>(QStringLiteral("mainContent"));
-        const auto* title_bar = findChild<QWidget*>(QStringLiteral("windowTitleBar"));
-        const int natural_height = content && title_bar
-            ? content->sizeHint().height() + title_bar->sizeHint().height() + 6
-            : hint.height();
-        const int target_height = std::max(
-            610, std::min(natural_height, available_height));
-        setMinimumHeight(target_height);
-        resize(std::max(vehicle_mode_ ? 720 : 620, hint.width()),
-               target_height);
+        auto* content = findChild<QWidget*>(QStringLiteral("mainContent"));
+        auto* title_bar = findChild<QWidget*>(QStringLiteral("windowTitleBar"));
+        if (!content || !title_bar) return;
+        if (content->layout()) {
+            content->layout()->invalidate();
+            content->layout()->activate();
+        }
+        content->updateGeometry();
+
+        const QSize content_size = content->sizeHint();
+        const QSize title_size = title_bar->sizeHint();
+        const QSize required_size = MainWindowSizing::minimum_for_content(
+            content_size, title_size);
+        setMinimumSize(required_size);
+
+        resize(window_sizing_.preferred(vehicle_mode_, required_size));
+        window_sizing_.remember(vehicle_mode_, size());
     }
 
     void update_terrain_summary(std::optional<double> height_delta = std::nullopt) {
+        terrain_summary_->setProperty(
+            "warning", terrain_map_.has_value() && terrain_map_->outdated);
+        terrain_summary_->style()->unpolish(terrain_summary_);
+        terrain_summary_->style()->polish(terrain_summary_);
         if (!terrain_map_) {
             const auto count = terrain_discovery_.installed.size();
             terrain_summary_->setText(count
@@ -811,6 +818,8 @@ private:
         }
         auto text = qtext(terrain_map_->spec.display_name) +
                     QStringLiteral(" · 2 m / 0.1 m 高度数据");
+        if (terrain_map_->outdated)
+            text += QStringLiteral(" · ⚠ Season 1 数据包已过期，请更新至 Season 2");
         if (height_delta) {
             const auto value = QString::number(*height_delta, 'f', 1);
             text += QStringLiteral(" · 目标高差 ") +
@@ -1424,13 +1433,25 @@ private:
             opacity_percent,
             wardogs::GhostReticlePreferences::minimum_opacity_percent,
             wardogs::GhostReticlePreferences::maximum_opacity_percent);
-        if (ghost_window_)
-            ghost_window_->set_opacity_percent(
-                settings_.ghost_reticle.opacity_percent);
+        apply_ghost_preferences(true);
+    }
+
+    // Single owner of ghost-reticle persistence: live previews and every
+    // commit path funnel through here, and only this function may save.
+    void apply_ghost_preferences(bool autosave) {
+        if (ghost_window_) {
+            ghost_window_->set_preferences(settings_.ghost_reticle);
+            ghost_window_->set_target_monitor(
+                settings_.capture_region
+                    ? settings_.capture_region->monitor_device
+                    : std::wstring{});
+        }
         if (pinned_window_)
             pinned_window_->set_ghost_opacity_percent(
                 settings_.ghost_reticle.opacity_percent);
-        try { wardogs::save_settings(settings_); } catch (...) {}
+        if (autosave) {
+            try { wardogs::save_settings(settings_); } catch (...) {}
+        }
     }
 
     void toggle_ghost_arc() {
@@ -1719,9 +1740,17 @@ private:
             set_status(QStringLiteral("OCR 正在执行，请稍候再修改设置"));
             return;
         }
-        SettingsDialog dialog(settings_, this);
+        SettingsDialog dialog(
+            settings_,
+            [this](const wardogs::GhostReticlePreferences& preferences) {
+                // Live preview only; never persists from inside the dialog.
+                if (ghost_window_)
+                    ghost_window_->set_preferences(preferences);
+            },
+            this);
         unregister_hotkeys();
         if (dialog.exec() != QDialog::Accepted) {
+            apply_ghost_preferences(false);
             try {
                 register_hotkeys(settings_);
             } catch (const std::exception& error) {
@@ -1736,18 +1765,9 @@ private:
             register_hotkeys(candidate);
             wardogs::save_settings(candidate);
             settings_ = candidate;
-            if (ghost_window_) {
-                ghost_window_->set_opacity_percent(
-                    settings_.ghost_reticle.opacity_percent);
-                ghost_window_->set_bearing_compensation(
-                    settings_.ghost_reticle.bearing_compensation_deg);
-                ghost_window_->set_width(settings_.ghost_reticle.width);
-                ghost_window_->set_target_monitor(
-                    settings_.capture_region
-                        ? settings_.capture_region->monitor_device
-                        : std::wstring{});
-                if (adjust_ghost) ghost_window_->begin_adjustment();
-            }
+            apply_ghost_preferences(false);
+            if (adjust_ghost && ghost_window_)
+                ghost_window_->begin_adjustment();
             if (pinned_window_)
                 pinned_window_->configure_ghost_controls(
                     ghost_enabled_, settings_.ghost_reticle.opacity_percent,
@@ -1759,6 +1779,7 @@ private:
             set_status(QStringLiteral("设置已保存并立即生效"));
         } catch (const std::exception& error) {
             try { register_hotkeys(previous); } catch (...) {}
+            apply_ghost_preferences(false);
             set_status(QStringLiteral("设置保存失败：") + error_text(error), true);
         }
     }
@@ -1863,6 +1884,7 @@ QSlider[pinnedMenuSlider="true"]::handle:horizontal:hover { background:#f8fafc;
 QLabel#title,QLabel#dialogTitle { color:#f4f7fb; font-size:25px; font-weight:700; }
 QLabel#dialogTitle { font-size:22px; }
 QLabel#muted { color:#8190a3; }
+QLabel#muted[warning="true"] { color:#fbbf24; }
 QLabel#status { color:#75c9e8; padding:6px 4px 2px 4px; }
 QLabel#status[error="true"] { color:#fca5a5; }
 QLabel#resultCaption { color:#8190a3; font-size:12px; font-weight:600; }
@@ -1898,13 +1920,13 @@ QPushButton[quiet="true"] { background:#151f2e; color:#c8d3df; }
 QPushButton[quiet="true"]:hover { background:#202f43; color:#f2f6fb; }
 QPushButton[primary="true"] { background:#1e3e75; color:#f7f9fc; }
 QPushButton[primary="true"]:hover { background:#285297; }
-QPushButton#arcToggle { min-width:58px; padding-left:8px; padding-right:8px;
+QPushButton#arcToggle,QPushButton#ghostOutlineEnabled { min-width:58px; padding-left:8px; padding-right:8px;
     background:#0c1420; color:#9aa8b8; }
-QPushButton#arcToggle:hover { background:#192638; color:#e6edf5; }
-QPushButton#arcToggle[highlighted="true"] { background:#1e3e75; color:#f8fafc;
+QPushButton#arcToggle:hover,QPushButton#ghostOutlineEnabled:hover { background:#192638; color:#e6edf5; }
+QPushButton#arcToggle[highlighted="true"],QPushButton#ghostOutlineEnabled[highlighted="true"] { background:#1e3e75; color:#f8fafc;
     font-weight:700; }
-QPushButton#arcToggle[highlighted="true"]:hover { background:#285297; }
-QPushButton#arcToggle[highlighted="true"]:pressed { background:#183563; }
+QPushButton#arcToggle[highlighted="true"]:hover,QPushButton#ghostOutlineEnabled[highlighted="true"]:hover { background:#285297; }
+QPushButton#arcToggle[highlighted="true"]:pressed,QPushButton#ghostOutlineEnabled[highlighted="true"]:pressed { background:#183563; }
 QPushButton#iconButton { background:transparent; border:0;
                          border-radius:9px; padding:6px; min-height:0; }
 QPushButton#iconButton:hover { background:#192638; }
