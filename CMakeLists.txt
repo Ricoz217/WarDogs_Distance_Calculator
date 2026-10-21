@@ -182,13 +182,14 @@ add_executable(wardogs_vehicle_ui_tests
     src/app_icon.cpp
     src/ghost_reticle_window.cpp
     src/pinned_result_window.cpp
+    src/settings.cpp
     src/settings_dialog.cpp
     src/vehicle_solution_widget.cpp
     src/window_title_bar.cpp
 )
 target_include_directories(wardogs_vehicle_ui_tests PRIVATE include src)
 target_link_libraries(wardogs_vehicle_ui_tests PRIVATE
-    wardogs_core Qt6::Widgets dwmapi
+    wardogs_core Qt6::Widgets dwmapi shell32 ole32
 )
 if(MSVC)
     target_compile_options(wardogs_vehicle_ui_tests PRIVATE /W4 /permissive- /utf-8)

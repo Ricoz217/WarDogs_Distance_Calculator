@@ -5,17 +5,22 @@
 
 #include <QComboBox>
 #include <QApplication>
+#include <QAbstractTextDocumentLayout>
 #include <QColor>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
 #include <QFormLayout>
+#include <QFrame>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QImage>
+#include <QInputDialog>
+#include <QKeyEvent>
 #include <QKeySequenceEdit>
 #include <QLabel>
 #include <QLineEdit>
 #include <QLinearGradient>
+#include <QListWidget>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
@@ -23,6 +28,9 @@
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QRegularExpressionValidator>
+#include <QScreen>
+#include <QScrollArea>
+#include <QSignalBlocker>
 #include <QSlider>
 #include <QStyle>
 #include <QVBoxLayout>
@@ -46,6 +54,86 @@ QString error_text(const std::exception& error) {
 QString hsl_color_css(int hue, int saturation, int lightness) {
     return QColor::fromHsl(hue, qRound(saturation * 2.55),
                            qRound(lightness * 2.55)).name();
+}
+
+constexpr std::array<const char*, 7> hotkey_action_names{
+    "设置区域", "基准点", "目标点", "快速目标", "OCR 落点", "切换弹道",
+    "幽灵分划开关"};
+constexpr std::array<const char*, 7> hotkey_action_keys{
+    "region", "base", "target", "quickTarget", "impact", "ghostArc",
+    "ghostToggle"};
+
+QString action_name(std::size_t index) {
+    return QString::fromUtf8(hotkey_action_names.at(index));
+}
+
+QString action_key(std::size_t index) {
+    return QString::fromLatin1(hotkey_action_keys.at(index));
+}
+
+std::wstring hotkey_text(const QKeySequenceEdit* editor) {
+    return editor->keySequence()
+        .toString(QKeySequence::PortableText)
+        .toStdWString();
+}
+
+QString trigger_label(wardogs::HotkeyTrigger trigger) {
+    switch (trigger) {
+    case wardogs::HotkeyTrigger::single: return QStringLiteral("单击");
+    case wardogs::HotkeyTrigger::double_press: return QStringLiteral("双击");
+    case wardogs::HotkeyTrigger::long_press: return QStringLiteral("长按");
+    }
+    return QStringLiteral("单击");
+}
+
+QString trigger_description(wardogs::HotkeyTrigger trigger) {
+    switch (trigger) {
+    case wardogs::HotkeyTrigger::single:
+        return QStringLiteral("独立单击按下即触发；同键组合时等待手势判定");
+    case wardogs::HotkeyTrigger::double_press:
+        return QStringLiteral("系统双击窗口内按两次（默认约 500 ms）");
+    case wardogs::HotkeyTrigger::long_press:
+        return QStringLiteral("按住约 400 ms 后触发");
+    }
+    return {};
+}
+
+wardogs::HotkeyTrigger trigger_from_button(const QPushButton* button) {
+    return static_cast<wardogs::HotkeyTrigger>(
+        button->property("hotkeyTrigger").toInt());
+}
+
+void set_trigger_button(QPushButton* button, wardogs::HotkeyTrigger trigger) {
+    const QString label = trigger_label(trigger);
+    button->setText(label + QStringLiteral("  ▾"));
+    button->setProperty("hotkeyTrigger", static_cast<int>(trigger));
+    const QString action = button->property("hotkeyActionName").toString();
+    button->setAccessibleName(action + QStringLiteral("触发方式：") + label);
+}
+
+QString trigger_key(wardogs::HotkeyTrigger trigger) {
+    switch (trigger) {
+    case wardogs::HotkeyTrigger::single: return QStringLiteral("single");
+    case wardogs::HotkeyTrigger::double_press: return QStringLiteral("double");
+    case wardogs::HotkeyTrigger::long_press: return QStringLiteral("long");
+    }
+    return QStringLiteral("single");
+}
+
+QFrame* make_separator() {
+    auto* line = new QFrame;
+    line->setObjectName(QStringLiteral("hotkeyTableSeparator"));
+    line->setFrameShape(QFrame::NoFrame);
+    line->setFixedHeight(1);
+    return line;
+}
+
+void set_choice_display(QPushButton* button, const QString& text) {
+    const QString full = text + QStringLiteral("  ▾");
+    const int available = std::max(24, button->width() - 22);
+    button->setText(button->fontMetrics().elidedText(
+        full, Qt::ElideRight, available));
+    button->setToolTip(text);
 }
 
 constexpr std::array<int, 5> ghost_line_width_stops{15, 20, 27, 35, 45};
@@ -325,6 +413,194 @@ private:
     QLineEdit* hex_edit_{};
 };
 
+struct ChoiceOption {
+    QString id;
+    QString title;
+    QString description;
+};
+
+class ChoicePopup final : public QWidget {
+public:
+    ChoicePopup(QString title, std::vector<ChoiceOption> options,
+                QString selected_id,
+                std::function<void(const QString&)> on_selected,
+                QWidget* parent, int width = 280,
+                QString option_prefix = QStringLiteral("choiceOption_"))
+        : QWidget(parent, Qt::Popup | Qt::FramelessWindowHint |
+                               Qt::NoDropShadowWindowHint),
+          selected_id_(std::move(selected_id)),
+          on_selected_(std::move(on_selected)),
+          option_prefix_(std::move(option_prefix)) {
+        setAttribute(Qt::WA_TranslucentBackground);
+        setAttribute(Qt::WA_DeleteOnClose);
+        setObjectName(QStringLiteral("choicePickerPopup"));
+
+        auto* outer = new QVBoxLayout(this);
+        outer->setContentsMargins(0, 0, 0, 0);
+        auto* panel = new QFrame;
+        panel->setObjectName(QStringLiteral("triggerPickerPanel"));
+        panel->setAttribute(Qt::WA_StyledBackground);
+        panel->setFixedWidth(width);
+        outer->addWidget(panel);
+
+        auto* layout = new QVBoxLayout(panel);
+        layout->setContentsMargins(10, 9, 10, 10);
+        layout->setSpacing(3);
+        auto* header = new QLabel(std::move(title));
+        header->setObjectName(QStringLiteral("triggerPickerHeader"));
+        layout->addWidget(header);
+
+        scroll_ = new QScrollArea(panel);
+        scroll_->setObjectName(QStringLiteral("choiceScroll"));
+        scroll_->setFrameShape(QFrame::NoFrame);
+        scroll_->setWidgetResizable(true);
+        scroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+        scroll_->setStyleSheet(QStringLiteral(
+            "QScrollArea{background:transparent;border:0;}"
+            "QScrollArea>QWidget{background:transparent;}"
+            "QScrollArea>QWidget>QWidget{background:transparent;}"));
+        auto* content = new QWidget;
+        content->setObjectName(QStringLiteral("choiceScrollContent"));
+        auto* options_layout = new QVBoxLayout(content);
+        options_layout->setContentsMargins(0, 0, 0, 0);
+        options_layout->setSpacing(3);
+        for (const auto& option : options) {
+            add_option(options_layout, option);
+        }
+        const int content_height =
+            static_cast<int>(options.size()) * 52 +
+            std::max(0, static_cast<int>(options.size()) - 1) * 3;
+        scroll_->setFixedHeight(std::min(300, content_height));
+        scroll_->setWidget(content);
+        layout->addWidget(scroll_);
+        adjustSize();
+    }
+
+    void show_at(QPushButton* anchor) {
+        adjustSize();
+        const QRect anchor_rect(anchor->mapToGlobal(QPoint(0, 0)),
+                                anchor->size());
+        QScreen* screen = anchor->screen();
+        const QRect available = screen ? screen->availableGeometry()
+                                       : QRect(QPoint(0, 0), size());
+        int x = anchor_rect.right() - width() + 1;
+        int y = anchor_rect.bottom() + 6;
+        if (y + height() > available.bottom() - 6)
+            y = anchor_rect.top() - height() - 6;
+        const int min_x = available.left() + 6;
+        const int max_x = std::max(min_x, available.right() - width() - 6);
+        const int min_y = available.top() + 6;
+        const int max_y = std::max(min_y, available.bottom() - height() - 6);
+        move(std::clamp(x, min_x, max_x), std::clamp(y, min_y, max_y));
+        show();
+        raise();
+        activateWindow();
+        for (auto* option : options_) {
+            if (option->isChecked()) {
+                option->setFocus();
+                if (scroll_) scroll_->ensureWidgetVisible(option);
+                break;
+            }
+        }
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override {
+        if (event->type() == QEvent::KeyPress) {
+            auto* key = static_cast<QKeyEvent*>(event);
+            if (key->key() == Qt::Key_Escape) {
+                close();
+                return true;
+            }
+            if (key->key() == Qt::Key_Down || key->key() == Qt::Key_Up) {
+                int index = 0;
+                for (std::size_t i = 0; i < options_.size(); ++i) {
+                    if (options_[i]->hasFocus()) index = static_cast<int>(i);
+                }
+                const int next =
+                    (index + (key->key() == Qt::Key_Down ? 1 : -1) +
+                     static_cast<int>(options_.size())) %
+                    static_cast<int>(options_.size());
+                options_[static_cast<std::size_t>(next)]->setFocus();
+                if (scroll_) {
+                    scroll_->ensureWidgetVisible(
+                        options_[static_cast<std::size_t>(next)]);
+                }
+                return true;
+            }
+            if (key->key() == Qt::Key_Return || key->key() == Qt::Key_Enter) {
+                for (auto* option : options_) {
+                    if (option->hasFocus()) {
+                        option->click();
+                        return true;
+                    }
+                }
+            }
+        }
+        return QWidget::eventFilter(watched, event);
+    }
+
+private:
+    void add_option(QVBoxLayout* layout, const ChoiceOption& option) {
+        auto* button = new QPushButton(layout->parentWidget());
+        button->setObjectName(option_prefix_ + option.id);
+        button->setProperty("triggerOption", true);
+        button->setCheckable(true);
+        button->setAutoExclusive(true);
+        button->setCursor(Qt::PointingHandCursor);
+        button->setFixedHeight(52);
+        button->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        button->setAccessibleName(option.title +
+                                  QStringLiteral("：") + option.description);
+        button->installEventFilter(this);
+
+        auto* row = new QHBoxLayout(button);
+        row->setContentsMargins(8, 4, 8, 4);
+        row->setSpacing(8);
+
+        auto* check = new QLabel(option.id == selected_id_
+                                     ? QStringLiteral("✓")
+                                     : QString());
+        check->setObjectName(QStringLiteral("triggerOptionCheck"));
+        check->setFixedWidth(18);
+        check->setAlignment(Qt::AlignCenter);
+        check->setAttribute(Qt::WA_TransparentForMouseEvents);
+
+        auto* text = new QVBoxLayout;
+        text->setContentsMargins(0, 0, 0, 0);
+        text->setSpacing(1);
+        auto* title = new QLabel(option.title);
+        title->setObjectName(QStringLiteral("triggerOptionTitle"));
+        title->setAttribute(Qt::WA_TransparentForMouseEvents);
+        auto* description = new QLabel(option.description);
+        description->setObjectName(QStringLiteral("triggerOptionDescription"));
+        description->setAttribute(Qt::WA_TransparentForMouseEvents);
+        description->setWordWrap(true);
+        text->addWidget(title);
+        text->addWidget(description);
+
+        row->addWidget(check);
+        row->addLayout(text, 1);
+
+        button->setChecked(option.id == selected_id_);
+        connect(button, &QPushButton::clicked, this,
+                [this, id = option.id] { choose(id); });
+        layout->addWidget(button);
+        options_.push_back(button);
+    }
+
+    void choose(const QString& id) {
+        if (on_selected_) on_selected_(id);
+        close();
+    }
+
+    QString selected_id_;
+    std::function<void(const QString&)> on_selected_;
+    QString option_prefix_;
+    QScrollArea* scroll_{};
+    std::vector<QPushButton*> options_;
+};
+
 }  // namespace
 
 SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
@@ -332,6 +608,12 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
     : QDialog(parent), capture_region_(settings.capture_region),
       pinned_card_(settings.pinned_card), ghost_reticle_(settings.ghost_reticle),
       ghost_preview_(std::move(ghost_preview)) {
+    hotkey_profiles_ = wardogs::builtin_hotkey_profiles();
+    for (const auto& profile : settings.custom_hotkey_profiles)
+        hotkey_profiles_.push_back(profile);
+    selected_hotkey_profile_ = settings.hotkey_profile;
+    if (!find_hotkey_profile(selected_hotkey_profile_))
+        selected_hotkey_profile_ = L"classic";
     configure_frameless_window(this);
     setWindowTitle(QStringLiteral("设置 · War Dogs 射表计算"));
     setModal(true);
@@ -347,7 +629,7 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
     title->setObjectName(QStringLiteral("dialogTitle"));
     root->addWidget(title);
     auto* subtitle = new QLabel(
-        QStringLiteral("修改后立即保存；OCR 区域也会在下次启动时恢复；"
+        QStringLiteral("保存后生效；OCR 区域也会在下次启动时恢复；"
                        "清空某项热键即可停用"));
     subtitle->setObjectName(QStringLiteral("muted"));
     root->addWidget(subtitle);
@@ -357,68 +639,19 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
     form->setContentsMargins(14, 14, 14, 14);
     form->setHorizontalSpacing(16);
     form->setVerticalSpacing(12);
-    backend_ = new QComboBox;
-    backend_->addItem(QStringLiteral("RapidOCR（首选）"), 0);
-    backend_->addItem(QStringLiteral("Windows 系统 OCR（兼容备用）"), 1);
-    backend_->setCurrentIndex(settings.backend == wardogs::OcrBackend::windows ? 1 : 0);
-    form->addRow(QStringLiteral("OCR 引擎"), backend_);
+    form->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    form->addRow(
+        QStringLiteral("OCR 引擎"),
+        build_engine_profile_row(
+            settings.backend == wardogs::OcrBackend::windows ? 1 : 0));
+    profile_notice_ = new QLabel;
+    profile_notice_->setObjectName(QStringLiteral("hotkeyProfileNotice"));
+    profile_notice_->setWordWrap(true);
+    form->addRow(QString{}, profile_notice_);
 
-    auto* hotkeys_first = new QWidget;
-    auto* first_row = new QHBoxLayout(hotkeys_first);
-    first_row->setContentsMargins(0, 0, 0, 0);
-    first_row->setSpacing(10);
-    const auto add_hotkey =
-        [this](QHBoxLayout* layout, const std::wstring& value,
-               wardogs::HotkeyTrigger trigger, const QString& label,
-               const QString& object_name, QKeySequenceEdit*& editor,
-               QComboBox*& trigger_box) {
-            const auto block =
-                make_hotkey(value, trigger, layout, label, object_name);
-            editor = block.editor;
-            trigger_box = block.trigger;
-        };
-    add_hotkey(first_row, settings.region_hotkey, settings.region_trigger,
-               QStringLiteral("设置区域"), QStringLiteral("region"), region_key_,
-               region_trigger_);
-    add_hotkey(first_row, settings.base_hotkey, settings.base_trigger,
-               QStringLiteral("基准"), QStringLiteral("base"), base_key_,
-               base_trigger_);
-    add_hotkey(first_row, settings.target_hotkey, settings.target_trigger,
-               QStringLiteral("目标"), QStringLiteral("target"), target_key_,
-               target_trigger_);
-    form->addRow(QStringLiteral("全局热键"), hotkeys_first);
-
-    auto* hotkeys_second = new QWidget;
-    auto* second_row = new QHBoxLayout(hotkeys_second);
-    second_row->setContentsMargins(0, 0, 0, 0);
-    second_row->setSpacing(10);
-    add_hotkey(second_row, settings.quick_target_hotkey,
-               settings.quick_target_trigger, QStringLiteral("快速目标"),
-               QStringLiteral("quickTarget"), quick_target_key_,
-               quick_target_trigger_);
-    add_hotkey(second_row, settings.impact_hotkey, settings.impact_trigger,
-               QStringLiteral("OCR落点"), QStringLiteral("impact"), impact_key_,
-               impact_trigger_);
-    impact_key_->setToolTip(
-        QStringLiteral("两发校准及持续校准共用的 OCR 落点热键"));
-    form->addRow(QString{}, hotkeys_second);
-
-    auto* hotkeys_third = new QWidget;
-    auto* third_row = new QHBoxLayout(hotkeys_third);
-    third_row->setContentsMargins(0, 0, 0, 0);
-    third_row->setSpacing(10);
-    add_hotkey(third_row, settings.ghost_arc_hotkey, settings.ghost_arc_trigger,
-               QStringLiteral("切换弹道"), QStringLiteral("ghostArc"),
-               ghost_arc_key_, ghost_arc_trigger_);
-    ghost_arc_key_->setToolTip(
-        QStringLiteral("切换幽灵分划优先显示的低射/高抛解"));
-    add_hotkey(third_row, settings.ghost_toggle_hotkey,
-               settings.ghost_toggle_trigger,
-               QStringLiteral("幽灵分划开关"), QStringLiteral("ghostToggle"),
-               ghost_toggle_key_, ghost_toggle_trigger_);
-    ghost_toggle_key_->setToolTip(
-        QStringLiteral("显示或关闭幽灵分划；清空即停用"));
-    form->addRow(QString{}, hotkeys_third);
+    form->addRow(QStringLiteral("全局热键"), build_hotkey_table(settings));
+    connect(qApp, &QApplication::focusChanged, this,
+            [this](QWidget*, QWidget*) { update_active_hotkey_row(); });
 
     auto* ghost_row = new QWidget;
     auto* ghost_layout = new QHBoxLayout(ghost_row);
@@ -597,15 +830,42 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
             });
 
     pattern_ = new QPlainTextEdit(qtext(settings.coordinate_pattern));
-    pattern_->setMinimumHeight(112);
     pattern_->setToolTip(QStringLiteral("前两个捕获组依次为 x 和 y"));
+    pattern_->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    pattern_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    const auto adjust_pattern_height = [this] {
+        if (!pattern_) return;
+        const int line = pattern_->fontMetrics().lineSpacing();
+        const int chrome = 2 * pattern_->frameWidth() + 12;
+        const int content = static_cast<int>(
+            std::ceil(pattern_->document()->size().height()));
+        pattern_->setFixedHeight(std::clamp(
+            content + chrome, 3 * line + chrome, 8 * line + chrome));
+    };
+    connect(pattern_, &QPlainTextEdit::textChanged, this,
+            adjust_pattern_height);
+    connect(pattern_->document()->documentLayout(),
+            &QAbstractTextDocumentLayout::documentSizeChanged, this,
+            [adjust_pattern_height](const QSizeF&) {
+                adjust_pattern_height();
+            });
+    adjust_pattern_height();
     form->addRow(QStringLiteral("坐标正则\n捕获组 x / y"), pattern_);
+    for (int row = 0; row < form->rowCount(); ++row) {
+        if (auto* item = form->itemAt(row, QFormLayout::LabelRole)) {
+            if (auto* label = qobject_cast<QLabel*>(item->widget())) {
+                label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+            }
+        }
+    }
     root->addWidget(panel, 1);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Save |
                                           QDialogButtonBox::Cancel);
-    buttons->button(QDialogButtonBox::Save)->setText(QStringLiteral("保存设置"));
-    buttons->button(QDialogButtonBox::Save)->setProperty("primary", true);
+    auto* save_button = buttons->button(QDialogButtonBox::Save);
+    save_button->setText(QStringLiteral("保存设置"));
+    save_button->setObjectName(QStringLiteral("saveSettings"));
+    save_button->setProperty("primary", true);
     buttons->button(QDialogButtonBox::Cancel)->setText(QStringLiteral("取消"));
     connect(buttons, &QDialogButtonBox::accepted, this,
             &SettingsDialog::accept_if_valid);
@@ -619,6 +879,7 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
     footer->addWidget(buttons);
     root->addLayout(footer);
     outer->addWidget(content);
+    update_profile_notice();
     outer->activate();
     const QSize required = minimumSizeHint();
     resize(required.width(), std::max(620, required.height()));
@@ -633,23 +894,28 @@ bool SettingsDialog::nativeEvent(const QByteArray& event_type, void* message,
 
 wardogs::AppSettings SettingsDialog::settings() const {
     wardogs::AppSettings value;
-    value.backend = backend_->currentData().toInt() == 1
-                        ? wardogs::OcrBackend::windows
-                        : wardogs::OcrBackend::rapid;
-    value.region_hotkey = hotkey_text(region_key_);
-    value.base_hotkey = hotkey_text(base_key_);
-    value.target_hotkey = hotkey_text(target_key_);
-    value.quick_target_hotkey = hotkey_text(quick_target_key_);
-    value.impact_hotkey = hotkey_text(impact_key_);
-    value.ghost_arc_hotkey = hotkey_text(ghost_arc_key_);
-    value.ghost_toggle_hotkey = hotkey_text(ghost_toggle_key_);
-    value.region_trigger = trigger_from_combo(region_trigger_);
-    value.base_trigger = trigger_from_combo(base_trigger_);
-    value.target_trigger = trigger_from_combo(target_trigger_);
-    value.quick_target_trigger = trigger_from_combo(quick_target_trigger_);
-    value.impact_trigger = trigger_from_combo(impact_trigger_);
-    value.ghost_arc_trigger = trigger_from_combo(ghost_arc_trigger_);
-    value.ghost_toggle_trigger = trigger_from_combo(ghost_toggle_trigger_);
+    value.backend = backend_value() == 1 ? wardogs::OcrBackend::windows
+                                         : wardogs::OcrBackend::rapid;
+    value.hotkey_profile = selected_hotkey_profile_;
+    for (const auto& profile : hotkey_profiles_) {
+        if (!profile.builtin) value.custom_hotkey_profiles.push_back(profile);
+    }
+    value.region_hotkey = hotkey_text(hotkey_rows_[0].editor);
+    value.base_hotkey = hotkey_text(hotkey_rows_[1].editor);
+    value.target_hotkey = hotkey_text(hotkey_rows_[2].editor);
+    value.quick_target_hotkey = hotkey_text(hotkey_rows_[3].editor);
+    value.impact_hotkey = hotkey_text(hotkey_rows_[4].editor);
+    value.ghost_arc_hotkey = hotkey_text(hotkey_rows_[5].editor);
+    value.ghost_toggle_hotkey = hotkey_text(hotkey_rows_[6].editor);
+    value.region_trigger = trigger_from_button(hotkey_rows_[0].trigger);
+    value.base_trigger = trigger_from_button(hotkey_rows_[1].trigger);
+    value.target_trigger = trigger_from_button(hotkey_rows_[2].trigger);
+    value.quick_target_trigger =
+        trigger_from_button(hotkey_rows_[3].trigger);
+    value.impact_trigger = trigger_from_button(hotkey_rows_[4].trigger);
+    value.ghost_arc_trigger = trigger_from_button(hotkey_rows_[5].trigger);
+    value.ghost_toggle_trigger =
+        trigger_from_button(hotkey_rows_[6].trigger);
     value.coordinate_pattern = pattern_->toPlainText().trimmed().toStdWString();
     value.capture_region = capture_region_;
     value.pinned_card = pinned_card_;
@@ -669,51 +935,575 @@ wardogs::AppSettings SettingsDialog::settings() const {
     return value;
 }
 
-SettingsDialog::HotkeyEditors SettingsDialog::make_hotkey(
-    const std::wstring& value, wardogs::HotkeyTrigger trigger,
-    QHBoxLayout* layout, const QString& label, const QString& object_name) {
-    auto* block = new QWidget;
-    auto* column = new QVBoxLayout(block);
-    column->setContentsMargins(0, 0, 0, 0);
-    column->setSpacing(4);
-    auto* caption = new QLabel(label);
-    caption->setObjectName(QStringLiteral("muted"));
-    auto* editor = new QKeySequenceEdit(QKeySequence(qtext(value)));
-    editor->setMaximumSequenceLength(1);
-    // Qt 6.4+ built-in clear button: emptying a field disables the hotkey.
-    editor->setClearButtonEnabled(true);
-    auto* trigger_box = new QComboBox;
-    trigger_box->setObjectName(QStringLiteral("hotkeyTrigger_") + object_name);
-    trigger_box->addItem(QStringLiteral("单击"),
-                         static_cast<int>(wardogs::HotkeyTrigger::single));
-    trigger_box->addItem(QStringLiteral("双击"),
-                         static_cast<int>(wardogs::HotkeyTrigger::double_press));
-    trigger_box->addItem(QStringLiteral("长按"),
-                         static_cast<int>(wardogs::HotkeyTrigger::long_press));
-    trigger_box->setCurrentIndex(trigger_box->findData(
-        static_cast<int>(trigger)));
-    trigger_box->setFixedWidth(64);
-    trigger_box->setToolTip(QStringLiteral(
-        "触发方式：单击按下即响应；双击需在系统双击时间内按两次；"
-        "长按约 400 ms 触发。选择双击或长按后，该键的单击响应会等待双击窗口"));
-    auto* row = new QHBoxLayout;
-    row->setContentsMargins(0, 0, 0, 0);
-    row->setSpacing(6);
-    row->addWidget(editor, 1);
-    row->addWidget(trigger_box);
-    column->addWidget(caption);
-    column->addLayout(row);
-    layout->addWidget(block, 1);
-    return {editor, trigger_box};
+int SettingsDialog::backend_value() const {
+    return backend_selector_
+               ? backend_selector_->property("backendValue").toInt()
+               : 0;
 }
 
-std::wstring SettingsDialog::hotkey_text(const QKeySequenceEdit* editor) {
-    return editor->keySequence().toString(QKeySequence::PortableText).toStdWString();
+QWidget* SettingsDialog::build_engine_profile_row(int backend) {
+    auto* row = new QWidget;
+    auto* layout = new QHBoxLayout(row);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(10);
+
+    backend_selector_ = new QPushButton;
+    backend_selector_->setObjectName(QStringLiteral("ocrEngineSelector"));
+    backend_selector_->setProperty("choiceDisplay", true);
+    backend_selector_->setProperty("backendValue", backend);
+    backend_selector_->setCursor(Qt::PointingHandCursor);
+    backend_selector_->setFixedSize(170, 28);
+    connect(backend_selector_, &QPushButton::clicked, this,
+            &SettingsDialog::show_backend_picker);
+    update_backend_selector();
+    layout->addWidget(backend_selector_);
+    layout->addSpacing(12);
+
+    auto* profile_label = new QLabel(QStringLiteral("全局热键配置"));
+    profile_label->setObjectName(QStringLiteral("muted"));
+    layout->addWidget(profile_label);
+
+    profile_selector_ = new QPushButton;
+    profile_selector_->setObjectName(QStringLiteral("hotkeyProfileSelector"));
+    profile_selector_->setProperty("choiceDisplay", true);
+    profile_selector_->setCursor(Qt::PointingHandCursor);
+    profile_selector_->setFixedSize(210, 28);
+    connect(profile_selector_, &QPushButton::clicked, this,
+            &SettingsDialog::show_profile_picker);
+    layout->addWidget(profile_selector_);
+
+    auto* manage = new QPushButton(QStringLiteral("管理"));
+    manage->setObjectName(QStringLiteral("manageHotkeyProfiles"));
+    manage->setCursor(Qt::PointingHandCursor);
+    manage->setFixedHeight(28);
+    manage->setToolTip(QStringLiteral("新建、重命名或删除自定义热键配置"));
+    connect(manage, &QPushButton::clicked, this,
+            &SettingsDialog::manage_hotkey_profiles);
+    layout->addWidget(manage);
+    layout->addStretch();
+
+    update_profile_selector();
+    return row;
 }
 
-wardogs::HotkeyTrigger SettingsDialog::trigger_from_combo(
-    const QComboBox* combo) {
-    return static_cast<wardogs::HotkeyTrigger>(combo->currentData().toInt());
+void SettingsDialog::update_backend_selector() {
+    if (!backend_selector_) return;
+    const QString text = backend_value() == 1
+                             ? QStringLiteral("Windows 系统 OCR")
+                             : QStringLiteral("RapidOCR");
+    set_choice_display(backend_selector_, text);
+    backend_selector_->setAccessibleName(
+        QStringLiteral("OCR 引擎：") + text + QStringLiteral("。点击选择。"));
+}
+
+void SettingsDialog::apply_backend(int backend) {
+    if (!backend_selector_) return;
+    backend_selector_->setProperty("backendValue", backend == 1 ? 1 : 0);
+    update_backend_selector();
+}
+
+void SettingsDialog::show_backend_picker() {
+    if (!backend_selector_) return;
+    const std::vector<ChoiceOption> options{
+        ChoiceOption{QStringLiteral("rapid"), QStringLiteral("RapidOCR"),
+                     QStringLiteral("CPU 识别，首选")},
+        ChoiceOption{QStringLiteral("windows"),
+                     QStringLiteral("Windows 系统 OCR"),
+                     QStringLiteral("低内存备用")},
+    };
+    const QString selected =
+        backend_value() == 1 ? QStringLiteral("windows")
+                             : QStringLiteral("rapid");
+    auto* popup = new ChoicePopup(
+        QStringLiteral("OCR 引擎"), options, selected,
+        [this](const QString& id) {
+            apply_backend(id == QStringLiteral("windows") ? 1 : 0);
+        },
+        backend_selector_, 260);
+    popup->show_at(backend_selector_);
+}
+
+void SettingsDialog::update_profile_selector() {
+    if (!profile_selector_) return;
+    const auto* profile = find_hotkey_profile(selected_hotkey_profile_);
+    const QString name =
+        profile ? qtext(profile->name) : QStringLiteral("未选择");
+    set_choice_display(profile_selector_, name);
+    QString tooltip = name;
+    if (profile && !profile->description.empty()) {
+        tooltip += QStringLiteral(" · ") + qtext(profile->description);
+    }
+    profile_selector_->setToolTip(tooltip);
+    profile_selector_->setAccessibleName(
+        QStringLiteral("全局热键配置：") + name +
+        QStringLiteral("。点击切换。"));
+}
+
+void SettingsDialog::show_profile_picker() {
+    if (!profile_selector_) return;
+    std::vector<ChoiceOption> options;
+    options.reserve(hotkey_profiles_.size());
+    for (const auto& profile : hotkey_profiles_) {
+        QString description = qtext(profile.description);
+        if (profile.builtin) {
+            description = QStringLiteral("内置 · ") + description;
+        } else if (description.isEmpty()) {
+            description = QStringLiteral("自定义配置");
+        }
+        options.push_back(ChoiceOption{
+            QString::fromStdWString(profile.id), qtext(profile.name),
+            description});
+    }
+    auto* popup = new ChoicePopup(
+        QStringLiteral("全局热键配置"), options,
+        QString::fromStdWString(selected_hotkey_profile_),
+        [this](const QString& id) {
+            apply_profile(id.toStdWString(), true);
+        },
+        profile_selector_, 340);
+    popup->show_at(profile_selector_);
+}
+
+void SettingsDialog::apply_hotkeys_to_table(
+    const wardogs::HotkeyProfile& profile) {
+    for (std::size_t i = 0; i < hotkey_rows_.size(); ++i) {
+        QSignalBlocker blocker(hotkey_rows_[i].editor);
+        hotkey_rows_[i].editor->setKeySequence(
+            QKeySequence(qtext(profile.hotkeys[i])));
+        set_trigger_button(hotkey_rows_[i].trigger, profile.triggers[i]);
+    }
+}
+
+void SettingsDialog::apply_profile(const std::wstring& id, bool announce) {
+    const auto* profile = find_hotkey_profile(id);
+    if (!profile) return;
+    const bool was_dirty = hotkey_profile_dirty_;
+    populating_hotkeys_ = true;
+    apply_hotkeys_to_table(*profile);
+    populating_hotkeys_ = false;
+    selected_hotkey_profile_ = id;
+    hotkey_profile_dirty_ = false;
+    update_profile_selector();
+    if (announce && was_dirty) {
+        update_profile_notice(
+            QStringLiteral("已切换配置；未保存的修改已丢弃。"));
+    } else {
+        update_profile_notice();
+    }
+}
+
+std::array<std::wstring, 7> SettingsDialog::current_hotkeys() const {
+    std::array<std::wstring, 7> result;
+    for (std::size_t i = 0; i < result.size(); ++i) {
+        result[i] = hotkey_text(hotkey_rows_[i].editor);
+    }
+    return result;
+}
+
+std::array<wardogs::HotkeyTrigger, 7>
+SettingsDialog::current_triggers() const {
+    std::array<wardogs::HotkeyTrigger, 7> result;
+    for (std::size_t i = 0; i < result.size(); ++i) {
+        result[i] = trigger_from_button(hotkey_rows_[i].trigger);
+    }
+    return result;
+}
+
+bool SettingsDialog::profile_matches_table(
+    const wardogs::HotkeyProfile& profile) const {
+    const auto hotkeys = current_hotkeys();
+    const auto triggers = current_triggers();
+    for (std::size_t i = 0; i < hotkeys.size(); ++i) {
+        if (profile.hotkeys[i] != hotkeys[i] ||
+            profile.triggers[i] != triggers[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+const wardogs::HotkeyProfile* SettingsDialog::find_hotkey_profile(
+    const std::wstring& id) const {
+    for (const auto& profile : hotkey_profiles_) {
+        if (profile.id == id) return &profile;
+    }
+    return nullptr;
+}
+
+std::size_t SettingsDialog::custom_profile_count() const {
+    return static_cast<std::size_t>(
+        std::count_if(hotkey_profiles_.begin(), hotkey_profiles_.end(),
+                      [](const wardogs::HotkeyProfile& profile) {
+                          return !profile.builtin;
+                      }));
+}
+
+std::wstring SettingsDialog::new_custom_profile_id() const {
+    for (int number = 1;; ++number) {
+        std::wstring id = L"custom-" + std::to_wstring(number);
+        if (!find_hotkey_profile(id)) return id;
+    }
+}
+
+std::wstring SettingsDialog::unique_profile_name(
+    const std::wstring& base, const std::wstring& ignore_id) const {
+    const auto exists = [&](const std::wstring& name) {
+        for (const auto& profile : hotkey_profiles_) {
+            if (profile.id != ignore_id && profile.name == name) return true;
+        }
+        return false;
+    };
+    if (!exists(base)) return base;
+    for (int number = 2;; ++number) {
+        std::wstring candidate = base + L" " + std::to_wstring(number);
+        if (!exists(candidate)) return candidate;
+    }
+}
+
+void SettingsDialog::mark_hotkeys_edited() {
+    if (populating_hotkeys_) return;
+    const auto* profile = find_hotkey_profile(selected_hotkey_profile_);
+    hotkey_profile_dirty_ = profile && !profile_matches_table(*profile);
+    update_profile_notice();
+}
+
+void SettingsDialog::update_profile_notice(const QString& extra) {
+    if (!profile_notice_) return;
+    QString text = extra;
+    const auto* profile = find_hotkey_profile(selected_hotkey_profile_);
+    if (text.isEmpty()) {
+        if (profile && profile->builtin) {
+            text = hotkey_profile_dirty_
+                       ? QStringLiteral(
+                             "内置配置已修改；保存时会另存为自定义配置。")
+                       : QStringLiteral(
+                             "内置配置；修改后保存会另存为自定义配置。");
+        } else {
+            text = hotkey_profile_dirty_
+                       ? QStringLiteral("自定义配置已修改；保存后写入此配置。")
+                       : QStringLiteral("自定义配置；保存后写入此配置。");
+        }
+    }
+    profile_notice_->setText(text);
+}
+
+bool SettingsDialog::commit_hotkey_profile() {
+    const auto* selected = find_hotkey_profile(selected_hotkey_profile_);
+    if (!selected) return true;
+    if (profile_matches_table(*selected)) {
+        hotkey_profile_dirty_ = false;
+        return true;
+    }
+    if (selected->builtin) {
+        if (custom_profile_count() >= wardogs::max_custom_hotkey_profiles) {
+            return false;
+        }
+        const std::wstring base_name = selected->name + L" 副本";
+        wardogs::HotkeyProfile copy;
+        copy.id = new_custom_profile_id();
+        copy.name = unique_profile_name(base_name);
+        copy.description = L"自定义配置";
+        copy.hotkeys = current_hotkeys();
+        copy.triggers = current_triggers();
+        hotkey_profiles_.push_back(std::move(copy));
+        selected_hotkey_profile_ = hotkey_profiles_.back().id;
+    } else {
+        const std::wstring id = selected->id;
+        for (auto& profile : hotkey_profiles_) {
+            if (profile.id == id) {
+                profile.hotkeys = current_hotkeys();
+                profile.triggers = current_triggers();
+                break;
+            }
+        }
+    }
+    hotkey_profile_dirty_ = false;
+    update_profile_selector();
+    update_profile_notice();
+    return true;
+}
+
+void SettingsDialog::manage_hotkey_profiles() {
+    QDialog dialog(this);
+    dialog.setWindowTitle(QStringLiteral("管理热键配置"));
+    dialog.setModal(true);
+    dialog.resize(460, 380);
+    auto* root = new QVBoxLayout(&dialog);
+    root->setContentsMargins(16, 16, 16, 16);
+    root->setSpacing(10);
+    auto* hint = new QLabel(
+        QStringLiteral("内置配置不能修改；新建副本会复制所选配置。"));
+    hint->setObjectName(QStringLiteral("muted"));
+    hint->setWordWrap(true);
+    root->addWidget(hint);
+    auto* list = new QListWidget;
+    list->setObjectName(QStringLiteral("hotkeyProfileList"));
+    root->addWidget(list, 1);
+    auto* buttons = new QHBoxLayout;
+    auto* add = new QPushButton(QStringLiteral("新建副本"));
+    auto* rename = new QPushButton(QStringLiteral("重命名"));
+    auto* remove = new QPushButton(QStringLiteral("删除"));
+    auto* close = new QPushButton(QStringLiteral("关闭"));
+    close->setProperty("primary", true);
+    buttons->addWidget(add);
+    buttons->addWidget(rename);
+    buttons->addWidget(remove);
+    buttons->addStretch();
+    buttons->addWidget(close);
+    root->addLayout(buttons);
+
+    std::wstring selected_id = selected_hotkey_profile_;
+    const auto refresh = [&] {
+        list->clear();
+        for (const auto& profile : hotkey_profiles_) {
+            auto* item = new QListWidgetItem(
+                qtext(profile.name) +
+                (profile.builtin ? QStringLiteral("   · 内置")
+                                 : QStringLiteral("   · 自定义")));
+            item->setData(Qt::UserRole, QString::fromStdWString(profile.id));
+            item->setToolTip(qtext(profile.description));
+            list->addItem(item);
+            if (profile.id == selected_id) list->setCurrentItem(item);
+        }
+        const auto* profile = find_hotkey_profile(selected_id);
+        const bool custom = profile && !profile->builtin;
+        rename->setEnabled(custom);
+        remove->setEnabled(custom);
+    };
+    refresh();
+
+    connect(list, &QListWidget::currentItemChanged, &dialog,
+            [&](QListWidgetItem* current, QListWidgetItem*) {
+                if (!current) return;
+                selected_id =
+                    current->data(Qt::UserRole).toString().toStdWString();
+                const auto* profile = find_hotkey_profile(selected_id);
+                const bool custom = profile && !profile->builtin;
+                rename->setEnabled(custom);
+                remove->setEnabled(custom);
+            });
+    connect(add, &QPushButton::clicked, &dialog, [&] {
+        if (custom_profile_count() >= wardogs::max_custom_hotkey_profiles) {
+            QMessageBox::information(
+                &dialog, QStringLiteral("新建热键配置"),
+                QStringLiteral("自定义热键配置最多 %1 个，请先删除一个配置。")
+                    .arg(static_cast<qulonglong>(
+                        wardogs::max_custom_hotkey_profiles)));
+            return;
+        }
+        const auto* source = find_hotkey_profile(selected_id);
+        if (!source) source = find_hotkey_profile(L"classic");
+        if (!source) return;
+        bool ok = false;
+        const QString default_name =
+            qtext(source->name) + QStringLiteral(" 副本");
+        const QString name = QInputDialog::getText(
+            &dialog, QStringLiteral("新建热键配置"),
+            QStringLiteral("配置名称："), QLineEdit::Normal, default_name,
+            &ok);
+        if (!ok || name.trimmed().isEmpty()) return;
+        const auto hotkeys = source->hotkeys;
+        const auto triggers = source->triggers;
+        wardogs::HotkeyProfile profile;
+        profile.id = new_custom_profile_id();
+        profile.name = unique_profile_name(name.trimmed().toStdWString());
+        profile.description = L"自定义配置";
+        profile.hotkeys = hotkeys;
+        profile.triggers = triggers;
+        hotkey_profiles_.push_back(std::move(profile));
+        selected_id = hotkey_profiles_.back().id;
+        refresh();
+    });
+    connect(rename, &QPushButton::clicked, &dialog, [&] {
+        const auto* profile = find_hotkey_profile(selected_id);
+        if (!profile || profile->builtin) return;
+        bool ok = false;
+        const QString name = QInputDialog::getText(
+            &dialog, QStringLiteral("重命名热键配置"),
+            QStringLiteral("配置名称："), QLineEdit::Normal,
+            qtext(profile->name), &ok);
+        if (!ok || name.trimmed().isEmpty()) return;
+        const std::wstring id = profile->id;
+        const std::wstring new_name =
+            unique_profile_name(name.trimmed().toStdWString(), id);
+        for (auto& item : hotkey_profiles_) {
+            if (item.id == id) {
+                item.name = new_name;
+                break;
+            }
+        }
+        refresh();
+    });
+    connect(remove, &QPushButton::clicked, &dialog, [&] {
+        const auto* profile = find_hotkey_profile(selected_id);
+        if (!profile || profile->builtin) return;
+        const QString name = qtext(profile->name);
+        if (QMessageBox::question(
+                &dialog, QStringLiteral("删除热键配置"),
+                QStringLiteral("确定删除「%1」？").arg(name),
+                QMessageBox::Yes | QMessageBox::No,
+                QMessageBox::No) != QMessageBox::Yes) {
+            return;
+        }
+        const std::wstring id = profile->id;
+        hotkey_profiles_.erase(
+            std::remove_if(
+                hotkey_profiles_.begin(), hotkey_profiles_.end(),
+                [&](const wardogs::HotkeyProfile& item) { return item.id == id; }),
+            hotkey_profiles_.end());
+        if (selected_id == id) selected_id = L"classic";
+        refresh();
+    });
+    connect(close, &QPushButton::clicked, &dialog, &QDialog::accept);
+    dialog.exec();
+    if (selected_id == selected_hotkey_profile_) {
+        // Renames update the selector without overwriting unsaved table edits.
+        update_profile_selector();
+        return;
+    }
+    if (find_hotkey_profile(selected_id)) {
+        apply_profile(selected_id, true);
+    } else {
+        apply_profile(L"classic", true);
+    }
+}
+
+QWidget* SettingsDialog::build_hotkey_table(
+    const wardogs::AppSettings& settings) {
+    const std::array<std::pair<std::wstring, wardogs::HotkeyTrigger>, 7>
+        initial{{
+            {settings.region_hotkey, settings.region_trigger},
+            {settings.base_hotkey, settings.base_trigger},
+            {settings.target_hotkey, settings.target_trigger},
+            {settings.quick_target_hotkey, settings.quick_target_trigger},
+            {settings.impact_hotkey, settings.impact_trigger},
+            {settings.ghost_arc_hotkey, settings.ghost_arc_trigger},
+            {settings.ghost_toggle_hotkey, settings.ghost_toggle_trigger},
+        }};
+
+    auto* card = new QFrame;
+    card->setObjectName(QStringLiteral("hotkeyTableCard"));
+    card->setAttribute(Qt::WA_StyledBackground);
+    auto* root = new QVBoxLayout(card);
+    root->setContentsMargins(10, 8, 10, 8);
+    root->setSpacing(0);
+
+    constexpr int action_width = 110;
+    constexpr int key_width = 200;
+    constexpr int trigger_width = 84;
+    auto* table_header = new QWidget;
+    auto* table_header_layout = new QHBoxLayout(table_header);
+    table_header_layout->setContentsMargins(8, 2, 8, 4);
+    table_header_layout->setSpacing(10);
+    const auto make_header = [](const QString& text, int width) {
+        auto* label = new QLabel(text);
+        label->setObjectName(QStringLiteral("hotkeyTableHeader"));
+        label->setFixedWidth(width);
+        label->setAlignment(Qt::AlignCenter);
+        return label;
+    };
+    table_header_layout->addWidget(
+        make_header(QStringLiteral("动作"), action_width));
+    table_header_layout->addStretch(1);
+    table_header_layout->addWidget(
+        make_header(QStringLiteral("按键"), key_width));
+    table_header_layout->addStretch(1);
+    table_header_layout->addWidget(
+        make_header(QStringLiteral("触发方式"), trigger_width));
+    root->addWidget(table_header);
+    root->addWidget(make_separator());
+
+    for (std::size_t i = 0; i < initial.size(); ++i) {
+        auto* frame = new QFrame;
+        frame->setObjectName(QStringLiteral("hotkeyTableRow"));
+        frame->setAttribute(Qt::WA_StyledBackground);
+        frame->setProperty("alternate", i % 2 == 1);
+        frame->setFixedHeight(40);
+        auto* row = new QHBoxLayout(frame);
+        row->setContentsMargins(8, 3, 8, 3);
+        row->setSpacing(10);
+
+        auto* action = new QLabel(action_name(i));
+        action->setObjectName(QStringLiteral("hotkeyTableAction"));
+        action->setFixedWidth(action_width);
+        action->setAlignment(Qt::AlignCenter);
+        row->addWidget(action);
+        row->addStretch(1);
+
+        auto* editor =
+            new QKeySequenceEdit(QKeySequence(qtext(initial[i].first)));
+        editor->setObjectName(QStringLiteral("hotkeyEditor_") +
+                              action_key(i));
+        editor->setMaximumSequenceLength(1);
+        editor->setClearButtonEnabled(true);
+        editor->setAccessibleName(action_name(i) + QStringLiteral("热键"));
+        editor->setFixedWidth(key_width);
+        if (auto* line = editor->findChild<QLineEdit*>())
+            line->setPlaceholderText(QStringLiteral("未设置"));
+        connect(editor, &QKeySequenceEdit::keySequenceChanged, this,
+                [this](const QKeySequence&) { mark_hotkeys_edited(); });
+        row->addWidget(editor);
+        row->addStretch(1);
+
+        auto* trigger = new QPushButton;
+        trigger->setObjectName(QStringLiteral("hotkeyTrigger_") +
+                               action_key(i));
+        trigger->setProperty("triggerDisplay", true);
+        trigger->setProperty("hotkeyActionName", action_name(i));
+        trigger->setCursor(Qt::PointingHandCursor);
+        trigger->setFixedSize(84, 28);
+        trigger->setToolTip(QStringLiteral(
+            "独立单击按下即响应；同键配置多种方式时等待手势判定；"
+            "双击按系统双击窗口内连按两次；长按约 400 ms 触发。"));
+        set_trigger_button(trigger, initial[i].second);
+        connect(trigger, &QPushButton::clicked, this, [this, trigger] {
+            const std::vector<ChoiceOption> options{
+                ChoiceOption{QStringLiteral("single"),
+                             trigger_label(wardogs::HotkeyTrigger::single),
+                             trigger_description(wardogs::HotkeyTrigger::single)},
+                ChoiceOption{
+                    QStringLiteral("double"),
+                    trigger_label(wardogs::HotkeyTrigger::double_press),
+                    trigger_description(wardogs::HotkeyTrigger::double_press)},
+                ChoiceOption{
+                    QStringLiteral("long"),
+                    trigger_label(wardogs::HotkeyTrigger::long_press),
+                    trigger_description(wardogs::HotkeyTrigger::long_press)},
+            };
+            const QString selected =
+                trigger_key(trigger_from_button(trigger));
+            auto* popup = new ChoicePopup(
+                QStringLiteral("触发方式"), options, selected,
+                [this, trigger](const QString& id) {
+                    set_trigger_button(
+                        trigger,
+                        wardogs::hotkey_trigger_from_name(
+                            id.toStdWString()));
+                    mark_hotkeys_edited();
+                },
+                trigger, 300, QStringLiteral("triggerOption_"));
+            popup->show_at(trigger);
+        });
+        row->addWidget(trigger, 0, Qt::AlignVCenter);
+
+        root->addWidget(frame);
+        if (i + 1 < initial.size()) root->addWidget(make_separator());
+        hotkey_rows_[i] = HotkeyRow{frame, editor, trigger};
+    }
+    return card;
+}
+
+void SettingsDialog::update_active_hotkey_row() {
+    QWidget* focus = QApplication::focusWidget();
+    for (auto& row : hotkey_rows_) {
+        if (!row.frame) continue;
+        const bool active = focus && row.frame->isAncestorOf(focus);
+        if (row.frame->property("active").toBool() == active) continue;
+        row.frame->setProperty("active", active);
+        row.frame->style()->unpolish(row.frame);
+        row.frame->style()->polish(row.frame);
+        row.frame->update();
+    }
 }
 
 void SettingsDialog::accept_if_valid() {
@@ -745,6 +1535,15 @@ void SettingsDialog::accept_if_valid() {
                                   std::regex_constants::icase);
         if (pattern.mark_count() < 2)
             throw std::invalid_argument("coordinate regex needs x/y capture groups");
+        if (!commit_hotkey_profile()) {
+            QMessageBox::information(
+                this, QStringLiteral("无法保存热键配置"),
+                QStringLiteral(
+                    "自定义热键配置最多 %1 个，请先在「管理热键配置」中删除一个配置。")
+                    .arg(static_cast<qulonglong>(
+                        wardogs::max_custom_hotkey_profiles)));
+            return;
+        }
         QDialog::accept();
     } catch (const std::regex_error&) {
         QMessageBox::warning(this, QStringLiteral("坐标正则不可用"),
