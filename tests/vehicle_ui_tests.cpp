@@ -11,16 +11,19 @@
 #include <QApplication>
 #include <QContextMenuEvent>
 #include <QComboBox>
+#include <QDialog>
 #include <QDoubleSpinBox>
 #include <QHoverEvent>
 #include <QImage>
 #include <QKeySequenceEdit>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QListWidget>
 #include <QMenu>
 #include <QMetaObject>
 #include <QMouseEvent>
 #include <QSlider>
+#include <QTimer>
 #include <QToolButton>
 #include <QPushButton>
 
@@ -75,14 +78,216 @@ int main(int argc, char* argv[]) {
           "settings opens at the minimum width required by its content");
     check(settings_dialog.width() < 800,
           "settings no longer reserves the former oversized default width");
-    const auto hotkey_editors = settings_dialog.findChildren<QKeySequenceEdit*>();
-    check(hotkey_editors.size() == 6,
-          "settings exposes all six configurable global hotkeys");
+    const auto hotkey_editors =
+        settings_dialog.findChildren<QKeySequenceEdit*>();
+    check(hotkey_editors.size() == 7,
+          "settings exposes all seven configurable global hotkeys inline");
+    bool clear_buttons = true;
     std::set<int> hotkey_rows;
-    for (const auto* editor : hotkey_editors)
+    for (const auto* editor : hotkey_editors) {
+        clear_buttons = clear_buttons && editor->isClearButtonEnabled();
         hotkey_rows.insert(editor->mapTo(&settings_dialog, QPoint{}).y());
-    check(hotkey_rows.size() == 2,
-          "the six hotkey editors are split evenly across two rows");
+    }
+    check(clear_buttons,
+          "every hotkey editor can be cleared to disable the binding");
+    check(hotkey_rows.size() == 7,
+          "the hotkeys use seven directly editable table rows");
+    check(settings_dialog.findChildren<QLabel*>(
+              QStringLiteral("hotkeyTableHeader")).size() == 3,
+          "the hotkey table uses the action/key/trigger columns");
+    check(settings_dialog.findChild<QPushButton*>(
+              QStringLiteral("editHotkeys")) == nullptr,
+          "the hotkey table no longer needs a separate modify page");
+
+    int trigger_count = 0;
+    for (const auto* button : settings_dialog.findChildren<QPushButton*>()) {
+        if (button->property("triggerDisplay").toBool()) ++trigger_count;
+    }
+    check(trigger_count == 7,
+          "every hotkey row has a trigger display button");
+
+    auto* target_editor = settings_dialog.findChild<QKeySequenceEdit*>(
+        QStringLiteral("hotkeyEditor_target"));
+    check(target_editor && target_editor->width() == 200,
+          "the key column uses half the former width");
+    bool action_header_centered = false;
+    for (const auto* label : settings_dialog.findChildren<QLabel*>(
+             QStringLiteral("hotkeyTableHeader"))) {
+        if (label->text() == QStringLiteral("动作"))
+            action_header_centered =
+                label->alignment().testFlag(Qt::AlignHCenter);
+    }
+    check(action_header_centered, "the action column header is centered");
+    bool actions_centered = true;
+    for (const auto* label : settings_dialog.findChildren<QLabel*>(
+             QStringLiteral("hotkeyTableAction"))) {
+        actions_centered = actions_centered &&
+                           label->alignment().testFlag(Qt::AlignHCenter);
+    }
+    check(actions_centered, "the action names are centered");
+    check(settings_dialog.settings().ghost_toggle_hotkey.empty(),
+          "the classic profile keeps the ghost reticle toggle unset");
+
+    auto* engine_selector = settings_dialog.findChild<QPushButton*>(
+        QStringLiteral("ocrEngineSelector"));
+    check(engine_selector &&
+              engine_selector->text().contains(QStringLiteral("RapidOCR")),
+          "the OCR engine selector starts on RapidOCR");
+    if (engine_selector) {
+        engine_selector->click();
+        auto* windows_option = engine_selector->findChild<QPushButton*>(
+            QStringLiteral("choiceOption_windows"));
+        check(windows_option != nullptr,
+              "the OCR engine selector uses the custom dark picker");
+        if (windows_option) windows_option->click();
+        check(settings_dialog.settings().backend ==
+                  wardogs::OcrBackend::windows,
+              "choosing the Windows OCR backend is returned by settings");
+        engine_selector->click();
+        auto* rapid_option = engine_selector->findChild<QPushButton*>(
+            QStringLiteral("choiceOption_rapid"));
+        if (rapid_option) rapid_option->click();
+        check(settings_dialog.settings().backend ==
+                  wardogs::OcrBackend::rapid,
+              "switching back restores RapidOCR");
+    }
+
+    auto* manage = settings_dialog.findChild<QPushButton*>(
+        QStringLiteral("manageHotkeyProfiles"));
+    check(manage != nullptr, "custom hotkey profiles have a manager");
+    if (manage) {
+        QTimer::singleShot(0, [&] {
+            auto* manager = qobject_cast<QDialog*>(
+                QApplication::activeModalWidget());
+            check(manager != nullptr, "the profile manager opens");
+            if (!manager) return;
+            auto* list = manager->findChild<QListWidget*>(
+                QStringLiteral("hotkeyProfileList"));
+            check(list && list->count() == 2,
+                  "the profile manager lists both built-in profiles");
+            manager->accept();
+        });
+        manage->click();
+    }
+
+    auto* profile_selector = settings_dialog.findChild<QPushButton*>(
+        QStringLiteral("hotkeyProfileSelector"));
+    check(profile_selector &&
+              profile_selector->text().contains(QStringLiteral("默认配置1")),
+          "the first default profile is selected initially");
+    if (profile_selector) {
+        profile_selector->click();
+        auto* advanced_option = profile_selector->findChild<QPushButton*>(
+            QStringLiteral("choiceOption_advanced"));
+        check(advanced_option != nullptr,
+              "the profile picker lists the second default profile");
+        if (advanced_option) advanced_option->click();
+        check(profile_selector->text().contains(QStringLiteral("默认配置2")),
+              "choosing a profile updates the selector");
+        auto* region_trigger = settings_dialog.findChild<QPushButton*>(
+            QStringLiteral("hotkeyTrigger_region"));
+        auto* quick_trigger = settings_dialog.findChild<QPushButton*>(
+            QStringLiteral("hotkeyTrigger_quickTarget"));
+        check(region_trigger &&
+                  region_trigger->text().contains(QStringLiteral("长按")) &&
+                  quick_trigger &&
+                  quick_trigger->text().contains(QStringLiteral("双击")),
+              "the five-key profile applies its trigger mapping");
+    }
+
+    auto* target_trigger = settings_dialog.findChild<QPushButton*>(
+        QStringLiteral("hotkeyTrigger_target"));
+    check(target_trigger &&
+              target_trigger->text().contains(QStringLiteral("单击")),
+          "the trigger display shows the current single mode");
+    if (target_trigger) {
+        check(target_trigger->width() >= target_trigger->sizeHint().width(),
+              "the trigger display is wide enough for its text");
+        target_trigger->click();
+        auto* double_option = target_trigger->findChild<QPushButton*>(
+            QStringLiteral("triggerOption_double"));
+        check(double_option != nullptr,
+              "the trigger picker exposes the double mode");
+        if (double_option) double_option->click();
+        check(target_trigger->text().contains(QStringLiteral("双击")),
+              "choosing double updates the trigger display");
+    }
+
+    auto* base_editor = settings_dialog.findChild<QKeySequenceEdit*>(
+        QStringLiteral("hotkeyEditor_base"));
+    check(base_editor != nullptr, "the base hotkey row is directly editable");
+    if (base_editor) base_editor->setKeySequence(QKeySequence());
+    check(settings_dialog.settings().target_trigger ==
+              wardogs::HotkeyTrigger::double_press,
+          "the chosen trigger is returned by settings");
+    check(settings_dialog.settings().base_hotkey.empty(),
+          "clearing a hotkey inline disables it in settings");
+
+    {
+        SettingsDialog fork_dialog(crowded_settings);
+        fork_dialog.show();
+        QApplication::processEvents();
+        auto* fork_target = fork_dialog.findChild<QPushButton*>(
+            QStringLiteral("hotkeyTrigger_target"));
+        check(fork_target != nullptr,
+              "the settings dialog exposes its target hotkey");
+        if (fork_target) {
+            fork_target->click();
+            auto* double_option = fork_target->findChild<QPushButton*>(
+                QStringLiteral("triggerOption_double"));
+            if (double_option) double_option->click();
+        }
+        auto* save = fork_dialog.findChild<QPushButton*>(
+            QStringLiteral("saveSettings"));
+        check(save != nullptr, "the settings dialog exposes its save button");
+        if (save) save->click();
+        const auto forked = fork_dialog.settings();
+        check(forked.hotkey_profile.rfind(L"custom-", 0) == 0,
+              "editing a built-in profile forks a custom profile on save");
+        check(!forked.custom_hotkey_profiles.empty() &&
+                  forked.custom_hotkey_profiles.front().name ==
+                      L"默认配置1 副本",
+              "the forked profile keeps the built-in intact and names the copy");
+        check(forked.target_trigger ==
+                  wardogs::HotkeyTrigger::double_press,
+              "the forked profile keeps the edited hotkey");
+        fork_dialog.hide();
+    }
+
+    {
+        SettingsDialog preserve_dialog(crowded_settings);
+        preserve_dialog.show();
+        QApplication::processEvents();
+        auto* preserve_trigger = preserve_dialog.findChild<QPushButton*>(
+            QStringLiteral("hotkeyTrigger_target"));
+        auto* preserve_manage = preserve_dialog.findChild<QPushButton*>(
+            QStringLiteral("manageHotkeyProfiles"));
+        check(preserve_trigger && preserve_manage,
+              "the preserve check exposes the trigger and profile manager");
+        if (preserve_trigger) {
+            preserve_trigger->click();
+            auto* double_option = preserve_trigger->findChild<QPushButton*>(
+                QStringLiteral("triggerOption_double"));
+            if (double_option) double_option->click();
+        }
+        if (preserve_manage) {
+            QTimer::singleShot(0, [&] {
+                auto* manager = qobject_cast<QDialog*>(
+                    QApplication::activeModalWidget());
+                check(manager != nullptr,
+                      "the profile manager opens for the preserve check");
+                if (manager) manager->accept();
+            });
+            preserve_manage->click();
+        }
+        check(preserve_trigger &&
+                  preserve_trigger->text().contains(QStringLiteral("双击")),
+              "closing the profile manager keeps unsaved hotkey edits");
+        check(preserve_dialog.settings().target_trigger ==
+                  wardogs::HotkeyTrigger::double_press,
+              "the preserved edit is still returned by settings");
+        preserve_dialog.hide();
+    }
     const auto* manual_adjust = settings_dialog.findChild<QPushButton*>(
         QStringLiteral("adjustGhostReticle"));
     auto* preset = settings_dialog.findChild<QComboBox*>(
