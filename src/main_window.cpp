@@ -467,10 +467,18 @@ private:
         pin_button_->setFixedSize(38, 34);
         pin_button_->setToolTip(QStringLiteral("置顶显示射表结果"));
         pin_button_->setAccessibleName(QStringLiteral("进入置顶模式"));
+        auto* settings_button = new QPushButton;
+        settings_button->setObjectName(QStringLiteral("iconButton"));
+        settings_button->setIcon(ui_icon(UiGlyph::settings));
+        settings_button->setIconSize(QSize(22, 22));
+        settings_button->setFixedSize(38, 34);
+        settings_button->setToolTip(QStringLiteral("偏好设置"));
+        settings_button->setAccessibleName(QStringLiteral("打开偏好设置"));
         heading->addWidget(title);
         heading->addStretch();
         heading->addWidget(ghost_button_);
         heading->addWidget(mode_button_);
+        heading->addWidget(settings_button);
         heading->addWidget(pin_button_);
         root->addLayout(heading);
         update_mode_button();
@@ -575,20 +583,13 @@ private:
         base_button_ = new QPushButton;
         target_button_ = new QPushButton;
         quick_target_button_ = new QPushButton;
-        auto* settings_button = new QPushButton;
-        settings_button->setObjectName(QStringLiteral("iconButton"));
-        settings_button->setIcon(ui_icon(UiGlyph::settings));
-        settings_button->setIconSize(QSize(20, 20));
-        settings_button->setFixedWidth(38);
-        settings_button->setToolTip(QStringLiteral("偏好设置"));
-        settings_button->setAccessibleName(QStringLiteral("打开偏好设置"));
         region_button_->setIcon(ui_icon(UiGlyph::scan));
         base_button_->setIcon(ui_icon(UiGlyph::location));
         target_button_->setIcon(ui_icon(UiGlyph::target));
         quick_target_button_->setIcon(ui_icon(UiGlyph::target));
         for (auto* button : {region_button_, base_button_, target_button_,
-                             quick_target_button_, settings_button})
-            actions->addWidget(button, button == settings_button ? 0 : 1);
+                             quick_target_button_})
+            actions->addWidget(button, 1);
         ocr_layout->addLayout(actions);
         ocr_text_ = new QLabel(QStringLiteral("OCR 原文：—"));
         ocr_text_->setObjectName(QStringLiteral("muted"));
@@ -1233,15 +1234,26 @@ private:
     }
 
     void update_action_labels() {
-        region_button_->setText(qtext(settings_.region_hotkey) +
-                                QStringLiteral("  设置区域"));
-        base_button_->setText(qtext(settings_.base_hotkey) + QStringLiteral("  基准"));
-        target_button_->setText(qtext(settings_.target_hotkey) + QStringLiteral("  目标"));
-        quick_target_button_->setText(qtext(settings_.quick_target_hotkey) +
-                                      QStringLiteral("  快速目标"));
+        const auto label = [](const std::wstring& hotkey, const QString& name) {
+            const QString value = qtext(hotkey).trimmed();
+            return value.isEmpty()
+                       ? name
+                       : value + QStringLiteral("  ") + name;
+        };
+        region_button_->setText(label(settings_.region_hotkey,
+                                      QStringLiteral("设置区域")));
+        base_button_->setText(label(settings_.base_hotkey,
+                                    QStringLiteral("基准")));
+        target_button_->setText(label(settings_.target_hotkey,
+                                      QStringLiteral("目标")));
+        quick_target_button_->setText(label(settings_.quick_target_hotkey,
+                                            QStringLiteral("快速目标")));
+        const QString impact = qtext(settings_.impact_hotkey).trimmed();
         calibration_ocr_->setToolTip(
-            QStringLiteral("%1 · OCR 录入落点；两发校准后直接持续修正")
-                .arg(qtext(settings_.impact_hotkey)));
+            impact.isEmpty()
+                ? QStringLiteral("OCR 录入落点；两发校准后直接持续修正")
+                : QStringLiteral("%1 · OCR 录入落点；两发校准后直接持续修正")
+                      .arg(impact));
     }
 
     void update_engine_summary() {
@@ -1468,6 +1480,14 @@ private:
             settings_.ghost_reticle.preferred_arc == wardogs::Arc::high;
         set_status(high ? QStringLiteral("幽灵分划优先显示高抛解")
                         : QStringLiteral("幽灵分划优先显示低射解"));
+    }
+
+    void toggle_ghost_display(const char* source) {
+        set_ghost_enabled(!ghost_enabled_);
+        wardogs::log_info(std::string("ghost.toggle source=") + source +
+                          " enabled=" + (ghost_enabled_ ? "1" : "0"));
+        set_status(ghost_enabled_ ? QStringLiteral("幽灵分划已显示")
+                                  : QStringLiteral("幽灵分划已关闭"));
     }
 
     void sync_ghost_solution() {
@@ -1806,17 +1826,22 @@ private:
             wardogs::parse_hotkey(settings.quick_target_hotkey),
             wardogs::parse_hotkey(settings.impact_hotkey),
             wardogs::parse_hotkey(settings.ghost_arc_hotkey),
+            wardogs::parse_hotkey(settings.ghost_toggle_hotkey),
             wardogs::parse_hotkey(settings.pinned_card.unlock_hotkey)};
         wardogs::validate_unique_hotkeys(values);
         {
             std::ostringstream diagnostic;
             diagnostic << "hotkey.configure";
             for (std::size_t index = 0; index < values.size(); ++index) {
-                diagnostic << " key" << index << '='
-                           << one_line_utf8(qtext(values[index].display))
-                           << "(vk=0x" << std::hex << std::uppercase
-                           << values[index].virtual_key << ",mod=0x"
-                           << values[index].modifiers << std::dec << ')';
+                diagnostic << " key" << index << '=';
+                if (!values[index].enabled()) {
+                    diagnostic << "(未设置)";
+                } else {
+                    diagnostic << one_line_utf8(qtext(values[index].display))
+                               << "(vk=0x" << std::hex << std::uppercase
+                               << values[index].virtual_key << ",mod=0x"
+                               << values[index].modifiers << std::dec << ')';
+                }
             }
             wardogs::log_info(diagnostic.str());
         }
@@ -1834,7 +1859,8 @@ private:
                 else if (index == 3) begin_quick_target();
                 else if (index == 4) start_ocr(OcrAction::calibration_impact);
                 else if (index == 5) toggle_ghost_arc();
-                else if (index == 6) unlock_pinned_window("hotkey");
+                else if (index == 6) toggle_ghost_display("hotkey");
+                else if (index == 7) unlock_pinned_window("hotkey");
             }, Qt::QueuedConnection);
         });
     }

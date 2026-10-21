@@ -20,6 +20,8 @@ struct AppSettings {
     std::wstring quick_target_hotkey{L"F11"};
     std::wstring impact_hotkey{L"F12"};
     std::wstring ghost_arc_hotkey{L"F4"};
+    // Disabled by default: users opt in explicitly.
+    std::wstring ghost_toggle_hotkey{};
     OcrBackend backend{OcrBackend::rapid};
     std::wstring coordinate_pattern{default_ocr_coordinate_pattern};
     std::optional<CaptureRegion> capture_region;

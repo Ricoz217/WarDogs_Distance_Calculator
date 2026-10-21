@@ -88,6 +88,8 @@ AppSettings load_settings_from(const std::filesystem::path& path) {
     settings.impact_hotkey = read_value(path, L"impact_hotkey", settings.impact_hotkey);
     settings.ghost_arc_hotkey =
         read_value(path, L"ghost_arc_hotkey", settings.ghost_arc_hotkey);
+    settings.ghost_toggle_hotkey =
+        read_value(path, L"ghost_toggle_hotkey", settings.ghost_toggle_hotkey);
     settings.coordinate_pattern =
         read_value(path, L"coordinate_pattern", settings.coordinate_pattern);
     settings.backend = read_value(path, L"ocr_backend", L"rapid") == L"windows"
@@ -207,6 +209,7 @@ void save_settings_to(const std::filesystem::path& path,
     write_value(path, L"quick_target_hotkey", settings.quick_target_hotkey);
     write_value(path, L"impact_hotkey", settings.impact_hotkey);
     write_value(path, L"ghost_arc_hotkey", settings.ghost_arc_hotkey);
+    write_value(path, L"ghost_toggle_hotkey", settings.ghost_toggle_hotkey);
     write_value(path, L"coordinate_pattern", settings.coordinate_pattern);
     write_value(path, L"ocr_backend",
                 settings.backend == OcrBackend::rapid ? L"rapid" : L"windows");

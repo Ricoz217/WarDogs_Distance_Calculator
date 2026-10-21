@@ -52,6 +52,7 @@ private:
     QKeySequenceEdit* quick_target_key_{};
     QKeySequenceEdit* impact_key_{};
     QKeySequenceEdit* ghost_arc_key_{};
+    QKeySequenceEdit* ghost_toggle_key_{};
     QComboBox* ghost_preset_{};
     QPushButton* ghost_outline_{};
     QSlider* ghost_line_width_{};

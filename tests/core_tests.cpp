@@ -129,6 +129,11 @@ int main() {
                          "a hotkey requires a non-modifier key");
     rejects([] { wardogs::parse_hotkey(L"F25"); },
             "unsupported function keys are rejected");
+    const auto disabled_hotkey = wardogs::parse_hotkey(L"");
+    check(!disabled_hotkey.enabled() && disabled_hotkey.virtual_key == 0,
+          "an empty hotkey parses to a disabled binding");
+    check(!wardogs::parse_hotkey(L"   ").enabled(),
+          "whitespace-only hotkeys are treated as disabled");
 
     const wardogs::AppSettings default_settings;
     check(default_settings.quick_target_hotkey == L"F11",
@@ -151,6 +156,14 @@ int main() {
     rejects_with_message(
         [&] { wardogs::validate_unique_hotkeys(duplicate_hotkeys); },
         "热键不能重复", "a duplicate quick target hotkey is rejected");
+    const std::array disabled_hotkeys{
+        wardogs::parse_hotkey(L"F8"), wardogs::parse_hotkey(L""),
+        wardogs::parse_hotkey(L"")};
+    try {
+        wardogs::validate_unique_hotkeys(disabled_hotkeys);
+    } catch (const std::invalid_argument&) {
+        check(false, "disabled bindings never collide with each other");
+    }
 
     wardogs::HotkeyMatcher matcher{unique_hotkeys};
     check(matcher.handle_key_event(VK_F8, true, 0) == 0,
@@ -173,6 +186,14 @@ int main() {
     modifier_matcher.handle_key_event(VK_F8, false, MOD_CONTROL);
     check(modifier_matcher.handle_key_event(VK_F8, true, 0) == 0,
           "the unmodified form remains independently available");
+
+    const std::array partially_disabled{wardogs::parse_hotkey(L""),
+                                        wardogs::parse_hotkey(L"F9")};
+    wardogs::HotkeyMatcher disabled_matcher{partially_disabled};
+    check(!disabled_matcher.handle_key_event(VK_F8, true, 0),
+          "a disabled binding never matches its former key");
+    check(disabled_matcher.handle_key_event(VK_F9, true, 0) == 1,
+          "enabled bindings keep their callback index when others are disabled");
 
     const auto log_path =
         std::filesystem::temp_directory_path() / "wardogs_session_logger_test.log";

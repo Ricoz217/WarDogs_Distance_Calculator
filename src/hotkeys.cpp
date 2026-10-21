@@ -42,7 +42,7 @@ Hotkey parse_hotkey(std::wstring_view text) {
         begin = end + 1;
     }
     if (parts.empty()) {
-        throw std::invalid_argument("热键不能为空");
+        return {MOD_NOREPEAT, 0, L""};
     }
 
     UINT modifiers = MOD_NOREPEAT;
@@ -126,7 +126,9 @@ Hotkey parse_hotkey(std::wstring_view text) {
 
 void validate_unique_hotkeys(std::span<const Hotkey> hotkeys) {
     for (std::size_t i = 0; i < hotkeys.size(); ++i) {
+        if (!hotkeys[i].enabled()) continue;
         for (std::size_t j = i + 1; j < hotkeys.size(); ++j) {
+            if (!hotkeys[j].enabled()) continue;
             if (hotkeys[i].modifiers == hotkeys[j].modifiers &&
                 hotkeys[i].virtual_key == hotkeys[j].virtual_key) {
                 throw std::invalid_argument("热键不能重复");
@@ -154,6 +156,7 @@ std::optional<std::size_t> HotkeyMatcher::handle_key_event(
     const UINT current_modifiers = active_modifiers & modifier_mask;
     for (std::size_t index = 0; index < hotkeys_.size(); ++index) {
         const auto& hotkey = hotkeys_[index];
+        if (!hotkey.enabled()) continue;
         if (hotkey.virtual_key == virtual_key &&
             (hotkey.modifiers & modifier_mask) == current_modifiers) {
             return index;
@@ -250,7 +253,8 @@ void GlobalHotkeyListener::start(std::span<const Hotkey> hotkeys, Callback callb
     impl_->callback = std::move(callback);
     impl_->watched_virtual_keys.clear();
     for (const auto& hotkey : hotkeys)
-        impl_->watched_virtual_keys.push_back(hotkey.virtual_key);
+        if (hotkey.enabled())
+            impl_->watched_virtual_keys.push_back(hotkey.virtual_key);
     Impl::active_instance = impl_.get();
     impl_->hook = SetWindowsHookExW(WH_KEYBOARD_LL, &Impl::hook_proc,
                                     GetModuleHandleW(nullptr), 0);

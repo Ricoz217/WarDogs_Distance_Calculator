@@ -18,6 +18,10 @@ struct Hotkey {
     UINT virtual_key{};
     std::wstring display;
 
+    // An empty binding parses to a disabled hotkey (virtual_key == 0). Disabled
+    // entries never match, never participate in duplicate validation, and keep
+    // their position so callback indices stay stable.
+    [[nodiscard]] bool enabled() const noexcept { return virtual_key != 0; }
     bool operator==(const Hotkey&) const = default;
 };
 

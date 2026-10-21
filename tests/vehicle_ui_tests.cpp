@@ -76,13 +76,20 @@ int main(int argc, char* argv[]) {
     check(settings_dialog.width() < 800,
           "settings no longer reserves the former oversized default width");
     const auto hotkey_editors = settings_dialog.findChildren<QKeySequenceEdit*>();
-    check(hotkey_editors.size() == 6,
-          "settings exposes all six configurable global hotkeys");
+    check(hotkey_editors.size() == 7,
+          "settings exposes all seven configurable global hotkeys");
     std::set<int> hotkey_rows;
-    for (const auto* editor : hotkey_editors)
+    bool clear_buttons = true;
+    for (const auto* editor : hotkey_editors) {
         hotkey_rows.insert(editor->mapTo(&settings_dialog, QPoint{}).y());
-    check(hotkey_rows.size() == 2,
-          "the six hotkey editors are split evenly across two rows");
+        clear_buttons = clear_buttons && editor->isClearButtonEnabled();
+    }
+    check(hotkey_rows.size() == 3,
+          "the seven hotkey editors are split across three rows");
+    check(clear_buttons,
+          "every hotkey editor can be cleared to disable the binding");
+    check(settings_dialog.settings().ghost_toggle_hotkey.empty(),
+          "the ghost reticle toggle starts disabled until it is configured");
     const auto* manual_adjust = settings_dialog.findChild<QPushButton*>(
         QStringLiteral("adjustGhostReticle"));
     auto* preset = settings_dialog.findChild<QComboBox*>(

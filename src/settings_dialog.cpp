@@ -347,7 +347,8 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
     title->setObjectName(QStringLiteral("dialogTitle"));
     root->addWidget(title);
     auto* subtitle = new QLabel(
-        QStringLiteral("修改后立即保存；OCR 区域也会在下次启动时恢复"));
+        QStringLiteral("修改后立即保存；OCR 区域也会在下次启动时恢复；"
+                       "清空某项热键即可停用"));
     subtitle->setObjectName(QStringLiteral("muted"));
     root->addWidget(subtitle);
 
@@ -382,11 +383,21 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
                               QStringLiteral("OCR落点"));
     impact_key_->setToolTip(
         QStringLiteral("两发校准及持续校准共用的 OCR 落点热键"));
-    ghost_arc_key_ = make_hotkey(settings.ghost_arc_hotkey, second_row,
+    form->addRow(QString{}, hotkeys_second);
+
+    auto* hotkeys_third = new QWidget;
+    auto* third_row = new QHBoxLayout(hotkeys_third);
+    third_row->setContentsMargins(0, 0, 0, 0);
+    third_row->setSpacing(10);
+    ghost_arc_key_ = make_hotkey(settings.ghost_arc_hotkey, third_row,
                                 QStringLiteral("切换弹道"));
     ghost_arc_key_->setToolTip(
         QStringLiteral("切换幽灵分划优先显示的低射/高抛解"));
-    form->addRow(QString{}, hotkeys_second);
+    ghost_toggle_key_ = make_hotkey(settings.ghost_toggle_hotkey, third_row,
+                                    QStringLiteral("幽灵分划开关"));
+    ghost_toggle_key_->setToolTip(
+        QStringLiteral("显示或关闭幽灵分划；清空即停用"));
+    form->addRow(QString{}, hotkeys_third);
 
     auto* ghost_row = new QWidget;
     auto* ghost_layout = new QHBoxLayout(ghost_row);
@@ -610,6 +621,7 @@ wardogs::AppSettings SettingsDialog::settings() const {
     value.quick_target_hotkey = hotkey_text(quick_target_key_);
     value.impact_hotkey = hotkey_text(impact_key_);
     value.ghost_arc_hotkey = hotkey_text(ghost_arc_key_);
+    value.ghost_toggle_hotkey = hotkey_text(ghost_toggle_key_);
     value.coordinate_pattern = pattern_->toPlainText().trimmed().toStdWString();
     value.capture_region = capture_region_;
     value.pinned_card = pinned_card_;
@@ -640,6 +652,8 @@ QKeySequenceEdit* SettingsDialog::make_hotkey(const std::wstring& value,
     caption->setObjectName(QStringLiteral("muted"));
     auto* editor = new QKeySequenceEdit(QKeySequence(qtext(value)));
     editor->setMaximumSequenceLength(1);
+    // Qt 6.4+ built-in clear button: emptying a field disables the hotkey.
+    editor->setClearButtonEnabled(true);
     column->addWidget(caption);
     column->addWidget(editor);
     layout->addWidget(block, 1);

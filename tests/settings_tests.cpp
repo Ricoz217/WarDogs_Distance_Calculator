@@ -33,11 +33,14 @@ int main() {
           "the impact OCR shortcut defaults to F12");
     check(saved.ghost_arc_hotkey == L"F4",
           "the ghost trajectory shortcut defaults to the unused F4 key");
+    check(saved.ghost_toggle_hotkey.empty(),
+          "the ghost reticle toggle hotkey is disabled by default");
     check(saved.ghost_reticle.bearing_compensation_deg == 0.0,
           "ghost bearing compensation defaults to zero degrees");
     saved.region_hotkey = L"Ctrl+F8";
     saved.impact_hotkey = L"Ctrl+Shift+F12";
     saved.ghost_arc_hotkey = L"Ctrl+Shift+G";
+    saved.ghost_toggle_hotkey = L"Ctrl+Alt+G";
     saved.ghost_reticle.opacity_percent = 72;
     saved.ghost_reticle.width = 1120;
     saved.ghost_reticle.bearing_compensation_deg = -0.35;
@@ -61,6 +64,8 @@ int main() {
           "the impact OCR shortcut survives the explicit-path round trip");
     check(loaded.ghost_arc_hotkey == saved.ghost_arc_hotkey,
           "the ghost trajectory shortcut survives the explicit-path round trip");
+    check(loaded.ghost_toggle_hotkey == L"Ctrl+Alt+G",
+          "the ghost reticle toggle hotkey survives the explicit-path round trip");
     check(loaded.ghost_reticle.opacity_percent == 72 &&
               loaded.ghost_reticle.width == 1120 &&
               std::abs(loaded.ghost_reticle.bearing_compensation_deg + 0.35) <
@@ -141,9 +146,23 @@ int main() {
           "invalid ghost style values fall back to usable defaults");
 
     saved.capture_region.reset();
+    saved.base_hotkey.clear();
     wardogs::save_settings_to(path, saved);
     check(!wardogs::load_settings_from(path).capture_region,
           "saving an empty region removes an earlier persisted region");
+    const AppSettings blanked = wardogs::load_settings_from(path);
+    check(blanked.base_hotkey.empty(),
+          "a cleared hotkey persists as disabled instead of recovering its default");
+
+    {
+        std::wofstream fresh(path, std::ios::trunc);
+        fresh << L"[settings]\n";
+    }
+    const AppSettings defaults = wardogs::load_settings_from(path);
+    check(defaults.base_hotkey == L"F9",
+          "a missing hotkey key still falls back to its built-in default");
+    check(defaults.ghost_toggle_hotkey.empty(),
+          "the ghost reticle toggle stays opt-in for existing installations");
 
     fs::remove_all(directory);
     if (failures) {
