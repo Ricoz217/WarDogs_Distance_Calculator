@@ -46,12 +46,12 @@
 #include <QPainter>
 #include <QPlainTextEdit>
 #include <QPointer>
+#include <QProxyStyle>
 #include <QPushButton>
 #include <QScreen>
 #include <QSignalBlocker>
 #include <QScrollArea>
 #include <QStringList>
-#include <QStyleFactory>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -158,6 +158,38 @@ QIcon weapon_mode_icon(bool vehicle_mode) {
         painter.drawLine(QPointF(10, 19.5), QPointF(14.5, 14));
     }
     return QIcon(image);
+}
+
+class FastTooltipStyle final : public QProxyStyle {
+public:
+    FastTooltipStyle() : QProxyStyle(QStringLiteral("Fusion")) {}
+
+    int styleHint(StyleHint hint, const QStyleOption* option = nullptr,
+                  const QWidget* widget = nullptr,
+                  QStyleHintReturn* return_data = nullptr) const override {
+        if (hint == QStyle::SH_ToolTip_WakeUpDelay) return 120;
+        if (hint == QStyle::SH_ToolTip_FallAsleepDelay) return 100;
+        return QProxyStyle::styleHint(hint, option, widget, return_data);
+    }
+};
+
+QString hotkey_trigger_text(wardogs::HotkeyTrigger trigger) {
+    switch (trigger) {
+    case wardogs::HotkeyTrigger::single: return QStringLiteral("单击");
+    case wardogs::HotkeyTrigger::double_press: return QStringLiteral("双击");
+    case wardogs::HotkeyTrigger::long_press: return QStringLiteral("长按");
+    }
+    return QStringLiteral("单击");
+}
+
+QString hotkey_hint(const std::wstring& hotkey,
+                    wardogs::HotkeyTrigger trigger) {
+    const QString key = qtext(hotkey).trimmed();
+    if (key.isEmpty()) return QStringLiteral("「未设置」");
+    if (trigger == wardogs::HotkeyTrigger::single)
+        return QStringLiteral("「") + key + QStringLiteral("」");
+    return QStringLiteral("「") + hotkey_trigger_text(trigger) + key +
+           QStringLiteral("」");
 }
 
 enum class UiGlyph { location, target, scan, refresh, clear, settings, reticle };
@@ -450,8 +482,6 @@ private:
         root->setSpacing(12);
 
         auto* heading = new QHBoxLayout;
-        auto* title = new QLabel(QStringLiteral("射表计算"));
-        title->setObjectName(QStringLiteral("title"));
         ghost_button_ = new QPushButton;
         ghost_button_->setObjectName(QStringLiteral("iconButton"));
         ghost_button_->setCheckable(true);
@@ -461,9 +491,10 @@ private:
         ghost_button_->setToolTip(QStringLiteral("显示幽灵分划"));
         ghost_button_->setAccessibleName(QStringLiteral("显示幽灵分划"));
         mode_button_ = new QPushButton;
-        mode_button_->setObjectName(QStringLiteral("iconButton"));
-        mode_button_->setIconSize(QSize(22, 22));
-        mode_button_->setFixedSize(38, 34);
+        mode_button_->setObjectName(QStringLiteral("modeSwitch"));
+        mode_button_->setIconSize(QSize(24, 24));
+        mode_button_->setFixedHeight(36);
+        mode_button_->setCursor(Qt::PointingHandCursor);
         pin_button_ = new QPushButton;
         pin_button_->setObjectName(QStringLiteral("iconButton"));
         pin_button_->setIcon(pin_icon());
@@ -478,10 +509,9 @@ private:
         settings_button->setFixedSize(38, 34);
         settings_button->setToolTip(QStringLiteral("偏好设置"));
         settings_button->setAccessibleName(QStringLiteral("打开偏好设置"));
-        heading->addWidget(title);
+        heading->addWidget(mode_button_);
         heading->addStretch();
         heading->addWidget(ghost_button_);
-        heading->addWidget(mode_button_);
         heading->addWidget(settings_button);
         heading->addWidget(pin_button_);
         root->addLayout(heading);
@@ -532,6 +562,35 @@ private:
         target_row->addWidget(target_input_, 1);
         target_row->addWidget(manual_target);
         coordinate_layout->addLayout(target_row);
+
+        auto* separator = new QFrame;
+        separator->setObjectName(QStringLiteral("panelSeparator"));
+        separator->setFrameShape(QFrame::NoFrame);
+        separator->setFixedHeight(1);
+        coordinate_layout->addWidget(separator);
+
+        engine_summary_ = new QLabel;
+        region_summary_ = new QLabel(QStringLiteral("OCR 区域：尚未设置"));
+        coordinate_layout->addWidget(engine_summary_);
+        coordinate_layout->addWidget(region_summary_);
+        auto* actions = new QHBoxLayout;
+        actions->setSpacing(8);
+        region_button_ = new QPushButton;
+        base_button_ = new QPushButton;
+        target_button_ = new QPushButton;
+        quick_target_button_ = new QPushButton;
+        region_button_->setIcon(ui_icon(UiGlyph::scan));
+        base_button_->setIcon(ui_icon(UiGlyph::location));
+        target_button_->setIcon(ui_icon(UiGlyph::target));
+        quick_target_button_->setIcon(ui_icon(UiGlyph::target));
+        for (auto* button : {region_button_, base_button_, target_button_,
+                             quick_target_button_})
+            actions->addWidget(button, 1);
+        coordinate_layout->addLayout(actions);
+        ocr_text_ = new QLabel(QStringLiteral("OCR 原文：—"));
+        ocr_text_->setObjectName(QStringLiteral("muted"));
+        ocr_text_->setWordWrap(true);
+        coordinate_layout->addWidget(ocr_text_);
         root->addWidget(coordinates);
 
         calibration_group_ = build_calibration_group();
@@ -572,34 +631,6 @@ private:
         vehicle_results->addWidget(vehicle_note_);
         vehicle_result_group_->hide();
         root->addWidget(vehicle_result_group_);
-
-        auto* ocr = new QGroupBox;
-        auto* ocr_layout = new QVBoxLayout(ocr);
-        ocr_layout->setContentsMargins(14, 14, 14, 14);
-        ocr_layout->setSpacing(8);
-        engine_summary_ = new QLabel;
-        region_summary_ = new QLabel(QStringLiteral("OCR 区域：尚未设置"));
-        ocr_layout->addWidget(engine_summary_);
-        ocr_layout->addWidget(region_summary_);
-        auto* actions = new QHBoxLayout;
-        actions->setSpacing(8);
-        region_button_ = new QPushButton;
-        base_button_ = new QPushButton;
-        target_button_ = new QPushButton;
-        quick_target_button_ = new QPushButton;
-        region_button_->setIcon(ui_icon(UiGlyph::scan));
-        base_button_->setIcon(ui_icon(UiGlyph::location));
-        target_button_->setIcon(ui_icon(UiGlyph::target));
-        quick_target_button_->setIcon(ui_icon(UiGlyph::target));
-        for (auto* button : {region_button_, base_button_, target_button_,
-                             quick_target_button_})
-            actions->addWidget(button, 1);
-        ocr_layout->addLayout(actions);
-        ocr_text_ = new QLabel(QStringLiteral("OCR 原文：—"));
-        ocr_text_->setObjectName(QStringLiteral("muted"));
-        ocr_text_->setWordWrap(true);
-        ocr_layout->addWidget(ocr_text_);
-        root->addWidget(ocr);
 
         status_ = new QLabel(QStringLiteral("就绪；请先设置游戏聊天框中的坐标区域"));
         status_->setObjectName(QStringLiteral("status"));
@@ -763,6 +794,8 @@ private:
 
     void update_mode_button() {
         mode_button_->setIcon(weapon_mode_icon(vehicle_mode_));
+        mode_button_->setText(vehicle_mode_ ? QStringLiteral("SPH-2")
+                                            : QStringLiteral("迫击炮"));
         mode_button_->setToolTip(vehicle_mode_
             ? QStringLiteral("切换到迫击炮")
             : QStringLiteral("切换到 SPH-2 两发校准"));
@@ -1248,32 +1281,47 @@ private:
     }
 
     void update_action_labels() {
-        const auto label = [](const std::wstring& hotkey, const QString& name) {
-            const QString value = qtext(hotkey).trimmed();
-            return value.isEmpty()
-                       ? name
-                       : value + QStringLiteral("  ") + name;
-        };
-        region_button_->setText(label(settings_.region_hotkey,
-                                      QStringLiteral("设置区域")));
-        base_button_->setText(label(settings_.base_hotkey,
-                                    QStringLiteral("基准")));
-        target_button_->setText(label(settings_.target_hotkey,
-                                      QStringLiteral("目标")));
-        quick_target_button_->setText(label(settings_.quick_target_hotkey,
-                                            QStringLiteral("快速目标")));
-        const QString impact = qtext(settings_.impact_hotkey).trimmed();
+        region_button_->setText(QStringLiteral("OCR区域"));
+        base_button_->setText(QStringLiteral("OCR基准点"));
+        target_button_->setText(QStringLiteral("OCR目标"));
+        quick_target_button_->setText(QStringLiteral("快速框选目标"));
+
+        region_button_->setToolTip(
+            hotkey_hint(settings_.region_hotkey, settings_.region_trigger) +
+            QStringLiteral("框选游戏聊天框中的坐标区域，并保存为默认区域"));
+        base_button_->setToolTip(
+            hotkey_hint(settings_.base_hotkey, settings_.base_trigger) +
+            QStringLiteral("从默认区域识别并设置基准点"));
+        target_button_->setToolTip(
+            hotkey_hint(settings_.target_hotkey, settings_.target_trigger) +
+            QStringLiteral("从默认区域识别目标点并立即计算"));
+        quick_target_button_->setToolTip(
+            hotkey_hint(settings_.quick_target_hotkey,
+                        settings_.quick_target_trigger) +
+            QStringLiteral("临时框选队友分享的坐标，立即识别并计算；"
+                           "不改变默认区域"));
         calibration_ocr_->setToolTip(
-            impact.isEmpty()
-                ? QStringLiteral("OCR 录入落点；两发校准后直接持续修正")
-                : QStringLiteral("%1 · OCR 录入落点；两发校准后直接持续修正")
-                      .arg(impact));
+            hotkey_hint(settings_.impact_hotkey, settings_.impact_trigger) +
+            QStringLiteral("识别实际落点；前两发用于基础校准，"
+                           "此后直接用于持续校准"));
+        update_ghost_button_tooltip();
+    }
+
+    void update_ghost_button_tooltip() {
+        if (!ghost_button_) return;
+        const QString action = ghost_enabled_ ? QStringLiteral("关闭幽灵分划")
+                                              : QStringLiteral("显示幽灵分划");
+        ghost_button_->setToolTip(
+            hotkey_hint(settings_.ghost_toggle_hotkey,
+                        settings_.ghost_toggle_trigger) +
+            action);
+        ghost_button_->setAccessibleName(ghost_button_->toolTip());
     }
 
     void update_engine_summary() {
         engine_summary_->setText(settings_.backend == wardogs::OcrBackend::rapid
-            ? QStringLiteral("当前引擎：RapidOCR（首选）")
-            : QStringLiteral("当前引擎：Windows 系统 OCR（兼容备用）"));
+            ? QStringLiteral("OCR引擎：RapidOCR")
+            : QStringLiteral("OCR引擎：Windows 系统 OCR"));
     }
 
     void update_region_summary() {
@@ -1442,10 +1490,7 @@ private:
             const QSignalBlocker blocker(ghost_button_);
             ghost_button_->setChecked(enabled);
             ghost_button_->setProperty("highlighted", enabled);
-            ghost_button_->setToolTip(enabled
-                ? QStringLiteral("关闭幽灵分划")
-                : QStringLiteral("显示幽灵分划"));
-            ghost_button_->setAccessibleName(ghost_button_->toolTip());
+            update_ghost_button_tooltip();
             ghost_button_->style()->unpolish(ghost_button_);
             ghost_button_->style()->polish(ghost_button_);
         }
@@ -1976,6 +2021,7 @@ QWidget#mainContent,QWidget#mainContentViewport { background:#0b1018; }
 QFrame#appFrame { background:#0b1018; border:3px solid transparent;
                   border-radius:9px; }
 QFrame#appFrame[error="true"] { border-color:#ef4444; }
+QFrame#panelSeparator { background:#1e2a3b; border:0; max-height:1px; }
 QWidget#windowTitleBar { background:#101821; border:0; }
 QLabel#windowTitleText { color:#cbd5e1; font-size:12px; font-weight:500; }
 QToolButton[windowControl="true"] { background:transparent; border:0;
@@ -2009,8 +2055,13 @@ QSlider[pinnedMenuSlider="true"]::handle:horizontal { background:#e2e8f0;
     border:1px solid #64748b; width:15px; margin:-6px 0; border-radius:7px; }
 QSlider[pinnedMenuSlider="true"]::handle:horizontal:hover { background:#f8fafc;
     border-color:#38bdf8; }
-QLabel#title,QLabel#dialogTitle { color:#f4f7fb; font-size:25px; font-weight:700; }
-QLabel#dialogTitle { font-size:22px; }
+QLabel#dialogTitle { color:#f4f7fb; font-size:22px; font-weight:700; }
+QPushButton#modeSwitch { background:#151f2e; border:1px solid #223248;
+    border-radius:9px; padding:2px 10px 2px 6px; min-height:0; color:#f4f7fb;
+    font-size:25px; font-weight:700; text-align:left; }
+QPushButton#modeSwitch:hover { background:#192638; border-color:#3569ae; }
+QPushButton#modeSwitch:pressed { background:#182f55; }
+QPushButton#modeSwitch:focus { border-color:#3569ae; }
 QLabel#muted { color:#8190a3; }
 QLabel#muted[warning="true"] { color:#fbbf24; }
 QLabel#status { color:#75c9e8; padding:6px 4px 2px 4px; }
@@ -2061,7 +2112,61 @@ QPushButton#iconButton:hover { background:#192638; }
 QPushButton#iconButton:pressed { background:#1e3e75; }
 QPushButton#iconButton[highlighted="true"] { background:#1e3e75; color:#f8fafc; }
 QPushButton:disabled { color:#667487; background:#141c28; }
-QToolTip { color:#eef3f8; background:#1a2636; border:0; padding:5px; }
+QLabel#hotkeyTableHeader { color:#8190a3; font-size:11px; font-weight:600;
+    padding:4px 6px; }
+QFrame#hotkeyTableCard { background:#111925; border:1px solid #2a3a50;
+    border-radius:10px; }
+QLabel#hotkeyTableAction { color:#dbe4ef; font-size:12px; padding:0 6px; }
+QFrame#hotkeyTableRow { background:transparent; }
+QFrame#hotkeyTableRow[alternate="true"] { background:#0e1724; }
+QFrame#hotkeyTableRow[active="true"] { background:#16263d; }
+QFrame#hotkeyTableSeparator { background:#1a2636; border:0;
+    max-height:1px; }
+QPushButton[triggerDisplay="true"] { background:#0c1420;
+    border:1px solid #223248; border-radius:8px; padding:3px 8px;
+    min-height:0; color:#c8d3df; font-size:12px; text-align:left; }
+QPushButton[triggerDisplay="true"]:hover { background:#192638;
+    border-color:#3569ae; color:#f2f6fb; }
+QPushButton[triggerDisplay="true"]:pressed { background:#182f55; }
+QPushButton[triggerDisplay="true"]:focus { border-color:#3569ae; }
+QPushButton[choiceDisplay="true"] { background:#0c1420;
+    border:1px solid #223248; border-radius:8px; padding:3px 8px;
+    min-height:0; color:#c8d3df; font-size:12px; text-align:left; }
+QPushButton[choiceDisplay="true"]:hover { background:#192638;
+    border-color:#3569ae; color:#f2f6fb; }
+QPushButton[choiceDisplay="true"]:pressed { background:#182f55; }
+QPushButton[choiceDisplay="true"]:focus { border-color:#3569ae; }
+QPushButton#manageHotkeyProfiles { background:#151f2e; border:0;
+    border-radius:7px; padding:3px 10px; min-height:0; color:#c8d3df;
+    font-size:12px; }
+QPushButton#manageHotkeyProfiles:hover { background:#202f43;
+    color:#f2f6fb; }
+QLabel#hotkeyProfileNotice { color:#8190a3; font-size:11px; }
+QListWidget#hotkeyProfileList { background:#0c1420;
+    border:1px solid #223248; border-radius:8px; color:#e6edf5;
+    padding:4px; }
+QListWidget#hotkeyProfileList::item { padding:6px 8px; border-radius:6px; }
+QListWidget#hotkeyProfileList::item:selected { background:#1e3e75;
+    color:#f3f6fa; }
+QFrame#triggerPickerPanel { background:#111925; border:1px solid #2a3a50;
+    border-radius:10px; }
+QLabel#triggerPickerHeader { color:#8190a3; font-size:11px;
+    font-weight:600; padding:2px 4px 4px 4px; }
+QPushButton[triggerOption="true"] { background:transparent;
+    border:1px solid transparent; border-radius:8px; padding:0;
+    min-height:0; text-align:left; }
+QPushButton[triggerOption="true"]:hover { background:#1a2a3e; }
+QPushButton[triggerOption="true"]:checked { background:#1e3e75;
+    border-color:#3569ae; }
+QPushButton[triggerOption="true"]:checked:hover { background:#285297; }
+QPushButton[triggerOption="true"]:focus { border-color:#3569ae; }
+QLabel#triggerOptionTitle { color:#dbe4ef; font-size:13px;
+    font-weight:500; }
+QLabel#triggerOptionDescription { color:#9fb0c3; font-size:11px; }
+QLabel#triggerOptionCheck { color:#67e8f9; font-size:13px;
+    font-weight:700; }
+QToolTip { color:#eef3f8; background:#111925; border:1px solid #2a3a50;
+    border-radius:6px; padding:5px 8px; }
 QScrollBar:vertical { background:transparent; width:9px; margin:0; }
 QScrollBar::handle:vertical { background:#334459; border-radius:4px; min-height:24px; }
 QScrollBar::add-line:vertical,QScrollBar::sub-line:vertical { height:0; }
@@ -2106,7 +2211,7 @@ int run_application(int argc, char* argv[]) {
                           std::to_string(static_cast<int>(state)) + " " +
                           foreground_summary());
     });
-    QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+    QApplication::setStyle(new FastTooltipStyle);
     auto interface_font = QFontDatabase::systemFont(QFontDatabase::GeneralFont);
     interface_font.setFamilies({QStringLiteral("Microsoft YaHei UI"),
                                 QStringLiteral("Microsoft YaHei"),
