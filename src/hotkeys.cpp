@@ -27,6 +27,21 @@ std::wstring upper(std::wstring value) {
 
 }  // namespace
 
+std::wstring_view hotkey_trigger_name(HotkeyTrigger trigger) {
+    switch (trigger) {
+    case HotkeyTrigger::single: return L"single";
+    case HotkeyTrigger::double_press: return L"double";
+    case HotkeyTrigger::long_press: return L"long";
+    }
+    return L"single";
+}
+
+HotkeyTrigger hotkey_trigger_from_name(std::wstring_view name) {
+    if (name == L"double") return HotkeyTrigger::double_press;
+    if (name == L"long") return HotkeyTrigger::long_press;
+    return HotkeyTrigger::single;
+}
+
 Hotkey parse_hotkey(std::wstring_view text) {
     std::vector<std::wstring> parts;
     std::size_t begin = 0;
@@ -137,6 +152,20 @@ void validate_unique_hotkeys(std::span<const Hotkey> hotkeys) {
     }
 }
 
+void validate_unique_bindings(std::span<const HotkeyBinding> bindings) {
+    for (std::size_t i = 0; i < bindings.size(); ++i) {
+        if (!bindings[i].hotkey.enabled()) continue;
+        for (std::size_t j = i + 1; j < bindings.size(); ++j) {
+            if (!bindings[j].hotkey.enabled()) continue;
+            if (bindings[i].trigger == bindings[j].trigger &&
+                bindings[i].hotkey.modifiers == bindings[j].hotkey.modifiers &&
+                bindings[i].hotkey.virtual_key == bindings[j].hotkey.virtual_key) {
+                throw std::invalid_argument("热键不能重复");
+            }
+        }
+    }
+}
+
 HotkeyMatcher::HotkeyMatcher(std::span<const Hotkey> hotkeys)
     : hotkeys_(hotkeys.begin(), hotkeys.end()) {
     validate_unique_hotkeys(hotkeys_);
@@ -147,7 +176,9 @@ std::optional<std::size_t> HotkeyMatcher::handle_key_event(
     if (virtual_key >= pressed_keys_.size()) return std::nullopt;
     if (!pressed) {
         pressed_keys_[virtual_key] = false;
-        return std::nullopt;
+        const auto matched = active_matches_[virtual_key];
+        active_matches_[virtual_key].reset();
+        return matched;
     }
     if (pressed_keys_[virtual_key]) return std::nullopt;
     pressed_keys_[virtual_key] = true;
@@ -159,10 +190,104 @@ std::optional<std::size_t> HotkeyMatcher::handle_key_event(
         if (!hotkey.enabled()) continue;
         if (hotkey.virtual_key == virtual_key &&
             (hotkey.modifiers & modifier_mask) == current_modifiers) {
+            active_matches_[virtual_key] = index;
             return index;
         }
     }
     return std::nullopt;
+}
+
+void HotkeyGestureRecognizer::add_group(
+    std::size_t group, std::span<const HotkeyGestureBinding> bindings) {
+    if (group >= groups_.size()) groups_.resize(group + 1);
+    auto& state = groups_[group];
+    for (const auto& binding : bindings) {
+        switch (binding.trigger) {
+        case HotkeyTrigger::single: state.single = binding.action; break;
+        case HotkeyTrigger::double_press:
+            state.double_press = binding.action;
+            break;
+        case HotkeyTrigger::long_press:
+            state.long_press = binding.action;
+            break;
+        }
+    }
+}
+
+void HotkeyGestureRecognizer::set_timing(int long_press_ms,
+                                         int double_press_ms) {
+    long_press_ms_ = std::max(1, long_press_ms);
+    double_press_ms_ = std::max(1, double_press_ms);
+}
+
+std::vector<std::size_t> HotkeyGestureRecognizer::handle(
+    std::size_t group, bool pressed, std::int64_t now_ms) {
+    std::vector<std::size_t> fired;
+    if (group >= groups_.size()) return fired;
+    auto& state = groups_[group];
+
+    if (pressed) {
+        if (state.pending_single) {
+            // Second tap inside the double-click window.
+            state.pending_single.reset();
+            state.awaiting_second_release = true;
+            if (state.long_press) state.long_deadline = now_ms + long_press_ms_;
+            return fired;
+        }
+        state.long_fired = false;
+        if (state.long_press) state.long_deadline = now_ms + long_press_ms_;
+        if (!state.long_press && !state.double_press && state.single)
+            fired.push_back(*state.single);
+        return fired;
+    }
+
+    state.long_deadline.reset();
+    if (state.long_fired) {
+        state.long_fired = false;
+        state.awaiting_second_release = false;
+        return fired;
+    }
+    if (state.awaiting_second_release) {
+        state.awaiting_second_release = false;
+        if (state.double_press) fired.push_back(*state.double_press);
+        return fired;
+    }
+    if (state.double_press) {
+        state.pending_single = now_ms + double_press_ms_;
+        return fired;
+    }
+    // A single-only key already fired on key-down; only a deferred
+    // single+long tap fires on release.
+    if (state.long_press && state.single) fired.push_back(*state.single);
+    return fired;
+}
+
+std::vector<std::size_t> HotkeyGestureRecognizer::fire_due(
+    std::int64_t now_ms) {
+    std::vector<std::size_t> fired;
+    for (auto& state : groups_) {
+        if (state.long_deadline && now_ms >= *state.long_deadline) {
+            state.long_deadline.reset();
+            state.long_fired = true;
+            if (state.long_press) fired.push_back(*state.long_press);
+        }
+        if (state.pending_single && now_ms >= *state.pending_single) {
+            state.pending_single.reset();
+            if (state.single) fired.push_back(*state.single);
+        }
+    }
+    return fired;
+}
+
+std::optional<std::int64_t> HotkeyGestureRecognizer::next_deadline_ms() const {
+    std::optional<std::int64_t> earliest;
+    for (const auto& state : groups_) {
+        for (const auto deadline : {state.long_deadline, state.pending_single}) {
+            if (!deadline) continue;
+            if (!earliest || *deadline < *earliest) earliest = deadline;
+        }
+    }
+    return earliest;
 }
 
 struct GlobalHotkeyListener::Impl {
@@ -226,8 +351,9 @@ struct GlobalHotkeyListener::Impl {
                 if (match && instance->callback) {
                     try {
                         log_info("hotkey.dispatch index=" +
-                                 std::to_string(*match));
-                        instance->callback(*match);
+                                 std::to_string(*match) + " pressed=" +
+                                 (pressed ? "1" : "0"));
+                        instance->callback(*match, pressed);
                     } catch (...) {
                         log_error("hotkey.callback_exception index=" +
                                   std::to_string(*match));

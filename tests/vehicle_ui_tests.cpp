@@ -90,6 +90,19 @@ int main(int argc, char* argv[]) {
           "every hotkey editor can be cleared to disable the binding");
     check(settings_dialog.settings().ghost_toggle_hotkey.empty(),
           "the ghost reticle toggle starts disabled until it is configured");
+    auto* target_trigger = settings_dialog.findChild<QComboBox*>(
+        QStringLiteral("hotkeyTrigger_target"));
+    check(target_trigger && target_trigger->count() == 3 &&
+              target_trigger->currentData().toInt() ==
+                  static_cast<int>(wardogs::HotkeyTrigger::single),
+          "every hotkey offers single, double, and long trigger modes");
+    if (target_trigger) {
+        target_trigger->setCurrentIndex(target_trigger->currentIndex() + 1);
+        check(settings_dialog.settings().target_trigger ==
+                  wardogs::HotkeyTrigger::double_press,
+              "choosing a trigger mode is returned by settings");
+        target_trigger->setCurrentIndex(0);
+    }
     const auto* manual_adjust = settings_dialog.findChild<QPushButton*>(
         QStringLiteral("adjustGhostReticle"));
     auto* preset = settings_dialog.findChild<QComboBox*>(

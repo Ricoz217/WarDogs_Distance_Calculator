@@ -3,6 +3,7 @@
 #include "wardogs/capture.hpp"
 #include "wardogs/core.hpp"
 #include "wardogs/ghost_reticle.hpp"
+#include "wardogs/hotkeys.hpp"
 #include "wardogs/pinned_preferences.hpp"
 
 #include <filesystem>
@@ -22,6 +23,13 @@ struct AppSettings {
     std::wstring ghost_arc_hotkey{L"F4"};
     // Disabled by default: users opt in explicitly.
     std::wstring ghost_toggle_hotkey{};
+    HotkeyTrigger region_trigger{HotkeyTrigger::single};
+    HotkeyTrigger base_trigger{HotkeyTrigger::single};
+    HotkeyTrigger target_trigger{HotkeyTrigger::single};
+    HotkeyTrigger quick_target_trigger{HotkeyTrigger::single};
+    HotkeyTrigger impact_trigger{HotkeyTrigger::single};
+    HotkeyTrigger ghost_arc_trigger{HotkeyTrigger::single};
+    HotkeyTrigger ghost_toggle_trigger{HotkeyTrigger::single};
     OcrBackend backend{OcrBackend::rapid};
     std::wstring coordinate_pattern{default_ocr_coordinate_pattern};
     std::optional<CaptureRegion> capture_region;

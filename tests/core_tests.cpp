@@ -170,10 +170,15 @@ int main() {
           "a matching key-down selects the first hotkey");
     check(!matcher.handle_key_event(VK_F8, true, 0),
           "holding a hotkey does not trigger repeatedly");
-    check(!matcher.handle_key_event(VK_F8, false, 0),
-          "key-up only rearms the hotkey");
+    check(matcher.handle_key_event(VK_F8, false, 0) == 0,
+          "key-up reports the released binding for gesture timing");
     check(matcher.handle_key_event(VK_F8, true, 0) == 0,
           "a hotkey triggers again after it is released");
+    check(matcher.handle_key_event(VK_F8, false, 0) == 0,
+          "the matching key-up reports its binding once");
+    check(!matcher.handle_key_event(VK_F8, false, 0) &&
+              !matcher.handle_key_event(VK_F7, false, 0),
+          "repeated or unmatched key-ups report nothing");
     check(!matcher.handle_key_event(VK_F9, true, MOD_CONTROL),
           "extra modifiers do not trigger an unmodified hotkey");
     matcher.handle_key_event(VK_F9, false, MOD_CONTROL);
@@ -194,6 +199,116 @@ int main() {
           "a disabled binding never matches its former key");
     check(disabled_matcher.handle_key_event(VK_F9, true, 0) == 1,
           "enabled bindings keep their callback index when others are disabled");
+
+    {
+        using wardogs::HotkeyBinding;
+        using wardogs::HotkeyTrigger;
+        const std::array distinct_triggers{
+            HotkeyBinding{wardogs::parse_hotkey(L"F10"), HotkeyTrigger::single},
+            HotkeyBinding{wardogs::parse_hotkey(L"F10"), HotkeyTrigger::double_press},
+            HotkeyBinding{wardogs::parse_hotkey(L"F10"), HotkeyTrigger::long_press},
+            HotkeyBinding{wardogs::parse_hotkey(L""), HotkeyTrigger::single},
+            HotkeyBinding{wardogs::parse_hotkey(L""), HotkeyTrigger::single},
+        };
+        try {
+            wardogs::validate_unique_bindings(distinct_triggers);
+        } catch (const std::invalid_argument&) {
+            check(false, "one physical key may host distinct trigger modes");
+        }
+        const std::array same_trigger{
+            HotkeyBinding{wardogs::parse_hotkey(L"F10"), HotkeyTrigger::double_press},
+            HotkeyBinding{wardogs::parse_hotkey(L"F10"), HotkeyTrigger::double_press},
+        };
+        rejects_with_message(
+            [&] { wardogs::validate_unique_bindings(same_trigger); },
+            "热键不能重复",
+            "the same key and trigger pair is still rejected");
+    }
+
+    {
+        using wardogs::HotkeyGestureBinding;
+        using wardogs::HotkeyTrigger;
+        const auto binding = [](std::size_t action, HotkeyTrigger trigger) {
+            return HotkeyGestureBinding{action, trigger};
+        };
+
+        const std::array single_only{binding(10, HotkeyTrigger::single)};
+        wardogs::HotkeyGestureRecognizer single_recognizer;
+        single_recognizer.set_timing(400, 500);
+        single_recognizer.add_group(0, single_only);
+        check(single_recognizer.handle(0, true, 1000) ==
+                  std::vector<std::size_t>{10},
+              "a single-only key fires immediately on key-down");
+        check(single_recognizer.handle(0, false, 1050).empty(),
+              "releasing a single-only key fires nothing further");
+        check(!single_recognizer.next_deadline_ms(),
+              "a single-only key schedules no timer");
+
+        const std::array click_and_double{
+            binding(20, HotkeyTrigger::single),
+            binding(21, HotkeyTrigger::double_press)};
+        wardogs::HotkeyGestureRecognizer double_recognizer;
+        double_recognizer.set_timing(400, 500);
+        double_recognizer.add_group(0, click_and_double);
+        check(double_recognizer.handle(0, true, 0).empty(),
+              "a double-capable key waits for the second tap");
+        check(double_recognizer.handle(0, false, 50).empty(),
+              "the first tap arms the double-click window");
+        check(double_recognizer.next_deadline_ms() == 550,
+              "the single action is scheduled when the window closes");
+        check(double_recognizer.fire_due(549).empty(),
+              "the single action waits out the whole double-click window");
+        check(double_recognizer.fire_due(550) == std::vector<std::size_t>{20},
+              "the single action fires when the window closes");
+        check(double_recognizer.handle(0, true, 1000).empty(),
+              "a later first tap waits again");
+        (void)double_recognizer.handle(0, false, 1040);
+        (void)double_recognizer.handle(0, true, 1100);
+        check(double_recognizer.handle(0, false, 1150) ==
+                  std::vector<std::size_t>{21},
+              "a second tap inside the window fires the double action");
+        check(double_recognizer.fire_due(1600).empty(),
+              "a consumed double tap leaves no pending single action");
+
+        const std::array tap_and_hold{
+            binding(30, HotkeyTrigger::single),
+            binding(31, HotkeyTrigger::long_press)};
+        wardogs::HotkeyGestureRecognizer hold_recognizer;
+        hold_recognizer.set_timing(400, 500);
+        hold_recognizer.add_group(0, tap_and_hold);
+        check(hold_recognizer.handle(0, true, 0).empty(),
+              "a hold-capable key waits for the threshold");
+        check(hold_recognizer.fire_due(399).empty(),
+              "the long action waits for the long-press threshold");
+        check(hold_recognizer.fire_due(400) == std::vector<std::size_t>{31},
+              "holding to the threshold fires the long action");
+        check(hold_recognizer.handle(0, false, 500).empty(),
+              "releasing after a long press adds nothing");
+        check(hold_recognizer.handle(0, true, 2000).empty(),
+              "the next press starts a fresh sequence");
+        check(hold_recognizer.handle(0, false, 2050) ==
+                  std::vector<std::size_t>{30},
+              "a quick tap on a single+long key fires the single action on release");
+
+        const std::array all_three{
+            binding(40, HotkeyTrigger::single),
+            binding(41, HotkeyTrigger::double_press),
+            binding(42, HotkeyTrigger::long_press)};
+        wardogs::HotkeyGestureRecognizer three_recognizer;
+        three_recognizer.set_timing(400, 500);
+        three_recognizer.add_group(0, all_three);
+        (void)three_recognizer.handle(0, true, 0);
+        (void)three_recognizer.handle(0, false, 50);
+        (void)three_recognizer.handle(0, true, 200);
+        check(three_recognizer.fire_due(600) == std::vector<std::size_t>{42},
+              "holding the second tap fires the long action and cancels the double");
+        check(three_recognizer.handle(0, false, 700).empty(),
+              "releasing after the second-tap long press adds nothing");
+        (void)three_recognizer.handle(0, true, 1000);
+        (void)three_recognizer.handle(0, false, 1050);
+        check(three_recognizer.fire_due(1550) == std::vector<std::size_t>{40},
+              "an isolated tap on the three-way key fires the single action");
+    }
 
     const auto log_path =
         std::filesystem::temp_directory_path() / "wardogs_session_logger_test.log";

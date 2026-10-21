@@ -367,20 +367,38 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
     auto* first_row = new QHBoxLayout(hotkeys_first);
     first_row->setContentsMargins(0, 0, 0, 0);
     first_row->setSpacing(10);
-    region_key_ = make_hotkey(settings.region_hotkey, first_row,
-                              QStringLiteral("设置区域"));
-    base_key_ = make_hotkey(settings.base_hotkey, first_row, QStringLiteral("基准"));
-    target_key_ = make_hotkey(settings.target_hotkey, first_row, QStringLiteral("目标"));
+    const auto add_hotkey =
+        [this](QHBoxLayout* layout, const std::wstring& value,
+               wardogs::HotkeyTrigger trigger, const QString& label,
+               const QString& object_name, QKeySequenceEdit*& editor,
+               QComboBox*& trigger_box) {
+            const auto block =
+                make_hotkey(value, trigger, layout, label, object_name);
+            editor = block.editor;
+            trigger_box = block.trigger;
+        };
+    add_hotkey(first_row, settings.region_hotkey, settings.region_trigger,
+               QStringLiteral("设置区域"), QStringLiteral("region"), region_key_,
+               region_trigger_);
+    add_hotkey(first_row, settings.base_hotkey, settings.base_trigger,
+               QStringLiteral("基准"), QStringLiteral("base"), base_key_,
+               base_trigger_);
+    add_hotkey(first_row, settings.target_hotkey, settings.target_trigger,
+               QStringLiteral("目标"), QStringLiteral("target"), target_key_,
+               target_trigger_);
     form->addRow(QStringLiteral("全局热键"), hotkeys_first);
 
     auto* hotkeys_second = new QWidget;
     auto* second_row = new QHBoxLayout(hotkeys_second);
     second_row->setContentsMargins(0, 0, 0, 0);
     second_row->setSpacing(10);
-    quick_target_key_ = make_hotkey(settings.quick_target_hotkey, second_row,
-                                    QStringLiteral("快速目标"));
-    impact_key_ = make_hotkey(settings.impact_hotkey, second_row,
-                              QStringLiteral("OCR落点"));
+    add_hotkey(second_row, settings.quick_target_hotkey,
+               settings.quick_target_trigger, QStringLiteral("快速目标"),
+               QStringLiteral("quickTarget"), quick_target_key_,
+               quick_target_trigger_);
+    add_hotkey(second_row, settings.impact_hotkey, settings.impact_trigger,
+               QStringLiteral("OCR落点"), QStringLiteral("impact"), impact_key_,
+               impact_trigger_);
     impact_key_->setToolTip(
         QStringLiteral("两发校准及持续校准共用的 OCR 落点热键"));
     form->addRow(QString{}, hotkeys_second);
@@ -389,12 +407,15 @@ SettingsDialog::SettingsDialog(const wardogs::AppSettings& settings,
     auto* third_row = new QHBoxLayout(hotkeys_third);
     third_row->setContentsMargins(0, 0, 0, 0);
     third_row->setSpacing(10);
-    ghost_arc_key_ = make_hotkey(settings.ghost_arc_hotkey, third_row,
-                                QStringLiteral("切换弹道"));
+    add_hotkey(third_row, settings.ghost_arc_hotkey, settings.ghost_arc_trigger,
+               QStringLiteral("切换弹道"), QStringLiteral("ghostArc"),
+               ghost_arc_key_, ghost_arc_trigger_);
     ghost_arc_key_->setToolTip(
         QStringLiteral("切换幽灵分划优先显示的低射/高抛解"));
-    ghost_toggle_key_ = make_hotkey(settings.ghost_toggle_hotkey, third_row,
-                                    QStringLiteral("幽灵分划开关"));
+    add_hotkey(third_row, settings.ghost_toggle_hotkey,
+               settings.ghost_toggle_trigger,
+               QStringLiteral("幽灵分划开关"), QStringLiteral("ghostToggle"),
+               ghost_toggle_key_, ghost_toggle_trigger_);
     ghost_toggle_key_->setToolTip(
         QStringLiteral("显示或关闭幽灵分划；清空即停用"));
     form->addRow(QString{}, hotkeys_third);
@@ -622,6 +643,13 @@ wardogs::AppSettings SettingsDialog::settings() const {
     value.impact_hotkey = hotkey_text(impact_key_);
     value.ghost_arc_hotkey = hotkey_text(ghost_arc_key_);
     value.ghost_toggle_hotkey = hotkey_text(ghost_toggle_key_);
+    value.region_trigger = trigger_from_combo(region_trigger_);
+    value.base_trigger = trigger_from_combo(base_trigger_);
+    value.target_trigger = trigger_from_combo(target_trigger_);
+    value.quick_target_trigger = trigger_from_combo(quick_target_trigger_);
+    value.impact_trigger = trigger_from_combo(impact_trigger_);
+    value.ghost_arc_trigger = trigger_from_combo(ghost_arc_trigger_);
+    value.ghost_toggle_trigger = trigger_from_combo(ghost_toggle_trigger_);
     value.coordinate_pattern = pattern_->toPlainText().trimmed().toStdWString();
     value.capture_region = capture_region_;
     value.pinned_card = pinned_card_;
@@ -641,9 +669,9 @@ wardogs::AppSettings SettingsDialog::settings() const {
     return value;
 }
 
-QKeySequenceEdit* SettingsDialog::make_hotkey(const std::wstring& value,
-                                               QHBoxLayout* layout,
-                                               const QString& label) {
+SettingsDialog::HotkeyEditors SettingsDialog::make_hotkey(
+    const std::wstring& value, wardogs::HotkeyTrigger trigger,
+    QHBoxLayout* layout, const QString& label, const QString& object_name) {
     auto* block = new QWidget;
     auto* column = new QVBoxLayout(block);
     column->setContentsMargins(0, 0, 0, 0);
@@ -654,29 +682,65 @@ QKeySequenceEdit* SettingsDialog::make_hotkey(const std::wstring& value,
     editor->setMaximumSequenceLength(1);
     // Qt 6.4+ built-in clear button: emptying a field disables the hotkey.
     editor->setClearButtonEnabled(true);
+    auto* trigger_box = new QComboBox;
+    trigger_box->setObjectName(QStringLiteral("hotkeyTrigger_") + object_name);
+    trigger_box->addItem(QStringLiteral("单击"),
+                         static_cast<int>(wardogs::HotkeyTrigger::single));
+    trigger_box->addItem(QStringLiteral("双击"),
+                         static_cast<int>(wardogs::HotkeyTrigger::double_press));
+    trigger_box->addItem(QStringLiteral("长按"),
+                         static_cast<int>(wardogs::HotkeyTrigger::long_press));
+    trigger_box->setCurrentIndex(trigger_box->findData(
+        static_cast<int>(trigger)));
+    trigger_box->setFixedWidth(64);
+    trigger_box->setToolTip(QStringLiteral(
+        "触发方式：单击按下即响应；双击需在系统双击时间内按两次；"
+        "长按约 400 ms 触发。选择双击或长按后，该键的单击响应会等待双击窗口"));
+    auto* row = new QHBoxLayout;
+    row->setContentsMargins(0, 0, 0, 0);
+    row->setSpacing(6);
+    row->addWidget(editor, 1);
+    row->addWidget(trigger_box);
     column->addWidget(caption);
-    column->addWidget(editor);
+    column->addLayout(row);
     layout->addWidget(block, 1);
-    return editor;
+    return {editor, trigger_box};
 }
 
 std::wstring SettingsDialog::hotkey_text(const QKeySequenceEdit* editor) {
     return editor->keySequence().toString(QKeySequence::PortableText).toStdWString();
 }
 
+wardogs::HotkeyTrigger SettingsDialog::trigger_from_combo(
+    const QComboBox* combo) {
+    return static_cast<wardogs::HotkeyTrigger>(combo->currentData().toInt());
+}
+
 void SettingsDialog::accept_if_valid() {
     try {
         const auto value = settings();
-        const std::array hotkeys{
-            wardogs::parse_hotkey(value.region_hotkey),
-            wardogs::parse_hotkey(value.base_hotkey),
-            wardogs::parse_hotkey(value.target_hotkey),
-            wardogs::parse_hotkey(value.quick_target_hotkey),
-            wardogs::parse_hotkey(value.impact_hotkey),
-            wardogs::parse_hotkey(value.ghost_arc_hotkey),
-            wardogs::parse_hotkey(value.pinned_card.unlock_hotkey),
+        const std::array bindings{
+            wardogs::HotkeyBinding{wardogs::parse_hotkey(value.region_hotkey),
+                                   value.region_trigger},
+            wardogs::HotkeyBinding{wardogs::parse_hotkey(value.base_hotkey),
+                                   value.base_trigger},
+            wardogs::HotkeyBinding{wardogs::parse_hotkey(value.target_hotkey),
+                                   value.target_trigger},
+            wardogs::HotkeyBinding{
+                wardogs::parse_hotkey(value.quick_target_hotkey),
+                value.quick_target_trigger},
+            wardogs::HotkeyBinding{wardogs::parse_hotkey(value.impact_hotkey),
+                                   value.impact_trigger},
+            wardogs::HotkeyBinding{wardogs::parse_hotkey(value.ghost_arc_hotkey),
+                                   value.ghost_arc_trigger},
+            wardogs::HotkeyBinding{
+                wardogs::parse_hotkey(value.ghost_toggle_hotkey),
+                value.ghost_toggle_trigger},
+            wardogs::HotkeyBinding{
+                wardogs::parse_hotkey(value.pinned_card.unlock_hotkey),
+                wardogs::HotkeyTrigger::single},
         };
-        wardogs::validate_unique_hotkeys(hotkeys);
+        wardogs::validate_unique_bindings(bindings);
         const std::wregex pattern(value.coordinate_pattern,
                                   std::regex_constants::icase);
         if (pattern.mark_count() < 2)

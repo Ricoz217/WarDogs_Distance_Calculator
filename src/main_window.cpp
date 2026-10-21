@@ -58,10 +58,12 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <iterator>
 #include <memory>
 #include <optional>
 #include <regex>
@@ -398,6 +400,8 @@ private:
     std::unique_ptr<wardogs::RapidOcr> rapid_;
     std::unique_ptr<wardogs::WindowsOcr> windows_;
     wardogs::GlobalHotkeyListener hotkey_listener_;
+    wardogs::HotkeyGestureRecognizer gesture_recognizer_;
+    QTimer* gesture_timer_{};
     HANDLE unlock_event_{};
     std::jthread worker_;
     std::atomic_bool busy_{false};
@@ -629,6 +633,16 @@ private:
         connect(quick_target_button_, &QPushButton::clicked, this,
                 &MainWindow::begin_quick_target);
         connect(settings_button, &QPushButton::clicked, this, &MainWindow::edit_settings);
+
+        gesture_timer_ = new QTimer(this);
+        gesture_timer_->setSingleShot(true);
+        connect(gesture_timer_, &QTimer::timeout, this, [this] {
+            for (const auto action :
+                 gesture_recognizer_.fire_due(gesture_now_ms())) {
+                run_hotkey_action(action);
+            }
+            sync_gesture_timer();
+        });
     }
 
     QGroupBox* build_calibration_group() {
@@ -1819,50 +1833,138 @@ private:
     }
 
     void register_hotkeys(const wardogs::AppSettings& settings) {
-        const std::array values{
-            wardogs::parse_hotkey(settings.region_hotkey),
-            wardogs::parse_hotkey(settings.base_hotkey),
-            wardogs::parse_hotkey(settings.target_hotkey),
-            wardogs::parse_hotkey(settings.quick_target_hotkey),
-            wardogs::parse_hotkey(settings.impact_hotkey),
-            wardogs::parse_hotkey(settings.ghost_arc_hotkey),
-            wardogs::parse_hotkey(settings.ghost_toggle_hotkey),
-            wardogs::parse_hotkey(settings.pinned_card.unlock_hotkey)};
-        wardogs::validate_unique_hotkeys(values);
+        const std::array<wardogs::HotkeyBinding, 8> bindings{{
+            {wardogs::parse_hotkey(settings.region_hotkey),
+             settings.region_trigger},
+            {wardogs::parse_hotkey(settings.base_hotkey), settings.base_trigger},
+            {wardogs::parse_hotkey(settings.target_hotkey),
+             settings.target_trigger},
+            {wardogs::parse_hotkey(settings.quick_target_hotkey),
+             settings.quick_target_trigger},
+            {wardogs::parse_hotkey(settings.impact_hotkey),
+             settings.impact_trigger},
+            {wardogs::parse_hotkey(settings.ghost_arc_hotkey),
+             settings.ghost_arc_trigger},
+            {wardogs::parse_hotkey(settings.ghost_toggle_hotkey),
+             settings.ghost_toggle_trigger},
+            {wardogs::parse_hotkey(settings.pinned_card.unlock_hotkey),
+             wardogs::HotkeyTrigger::single},
+        }};
+        wardogs::validate_unique_bindings(bindings);
+
+        // Two actions may share one physical key when their triggers differ;
+        // the listener registers each physical key once.
+        struct HotkeyGroup {
+            wardogs::Hotkey hotkey;
+            std::vector<wardogs::HotkeyGestureBinding> bindings;
+        };
+        constexpr UINT modifier_mask =
+            MOD_ALT | MOD_CONTROL | MOD_SHIFT | MOD_WIN;
+        std::vector<HotkeyGroup> groups;
+        for (std::size_t action = 0; action < bindings.size(); ++action) {
+            const auto& binding = bindings[action];
+            if (!binding.hotkey.enabled()) continue;
+            auto group = std::find_if(
+                groups.begin(), groups.end(), [&](const HotkeyGroup& candidate) {
+                    return candidate.hotkey.virtual_key ==
+                               binding.hotkey.virtual_key &&
+                           (candidate.hotkey.modifiers & modifier_mask) ==
+                               (binding.hotkey.modifiers & modifier_mask);
+                });
+            if (group == groups.end()) {
+                groups.push_back(HotkeyGroup{binding.hotkey, {}});
+                group = std::prev(groups.end());
+            }
+            group->bindings.push_back(
+                wardogs::HotkeyGestureBinding{action, binding.trigger});
+        }
+
+        gesture_recognizer_ = wardogs::HotkeyGestureRecognizer{};
+        gesture_recognizer_.set_timing(400, static_cast<int>(GetDoubleClickTime()));
+        std::vector<wardogs::Hotkey> registered;
+        registered.reserve(groups.size());
+        for (std::size_t index = 0; index < groups.size(); ++index) {
+            gesture_recognizer_.add_group(index, groups[index].bindings);
+            registered.push_back(groups[index].hotkey);
+        }
+
         {
             std::ostringstream diagnostic;
             diagnostic << "hotkey.configure";
-            for (std::size_t index = 0; index < values.size(); ++index) {
+            for (std::size_t index = 0; index < bindings.size(); ++index) {
                 diagnostic << " key" << index << '=';
-                if (!values[index].enabled()) {
+                if (!bindings[index].hotkey.enabled()) {
                     diagnostic << "(未设置)";
                 } else {
-                    diagnostic << one_line_utf8(qtext(values[index].display))
-                               << "(vk=0x" << std::hex << std::uppercase
-                               << values[index].virtual_key << ",mod=0x"
-                               << values[index].modifiers << std::dec << ')';
+                    diagnostic
+                        << one_line_utf8(qtext(bindings[index].hotkey.display))
+                        << '[' << one_line_utf8(qtext(std::wstring{
+                                      wardogs::hotkey_trigger_name(
+                                          bindings[index].trigger)}))
+                        << "](vk=0x" << std::hex << std::uppercase
+                        << bindings[index].hotkey.virtual_key << ",mod=0x"
+                        << bindings[index].hotkey.modifiers << std::dec << ')';
                 }
             }
             wardogs::log_info(diagnostic.str());
         }
-        hotkey_listener_.start(values, [this](std::size_t index) {
-            QMetaObject::invokeMethod(this, [this, index] {
-                wardogs::log_info("hotkey.handle index=" +
-                                  std::to_string(index) + " active_window=" +
-                                  (isActiveWindow() ? "1" : "0") +
-                                  " visible=" + (isVisible() ? "1" : "0") +
-                                  " pinned=" + (pinned_mode_ ? "1" : "0") +
-                                  " " + foreground_summary());
-                if (index == 0) begin_region_setup();
-                else if (index == 1) start_ocr(OcrAction::base);
-                else if (index == 2) start_ocr(OcrAction::target);
-                else if (index == 3) begin_quick_target();
-                else if (index == 4) start_ocr(OcrAction::calibration_impact);
-                else if (index == 5) toggle_ghost_arc();
-                else if (index == 6) toggle_ghost_display("hotkey");
-                else if (index == 7) unlock_pinned_window("hotkey");
-            }, Qt::QueuedConnection);
-        });
+
+        if (registered.empty()) {
+            if (hotkey_listener_.active()) hotkey_listener_.stop();
+            return;
+        }
+        hotkey_listener_.start(
+            registered, [this](std::size_t group, bool pressed) {
+                QMetaObject::invokeMethod(this, [this, group, pressed] {
+                    handle_hotkey_event(group, pressed);
+                }, Qt::QueuedConnection);
+            });
+    }
+
+    static std::int64_t gesture_now_ms() {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now().time_since_epoch())
+            .count();
+    }
+
+    void handle_hotkey_event(std::size_t group, bool pressed) {
+        if (pressed) {
+            wardogs::log_info("hotkey.handle group=" + std::to_string(group) +
+                              " active_window=" +
+                              (isActiveWindow() ? "1" : "0") +
+                              " visible=" + (isVisible() ? "1" : "0") +
+                              " pinned=" + (pinned_mode_ ? "1" : "0") +
+                              " " + foreground_summary());
+        }
+        for (const auto action :
+             gesture_recognizer_.handle(group, pressed, gesture_now_ms())) {
+            run_hotkey_action(action);
+        }
+        sync_gesture_timer();
+    }
+
+    void run_hotkey_action(std::size_t action) {
+        wardogs::log_info("hotkey.dispatch action=" + std::to_string(action));
+        if (action == 0) begin_region_setup();
+        else if (action == 1) start_ocr(OcrAction::base);
+        else if (action == 2) start_ocr(OcrAction::target);
+        else if (action == 3) begin_quick_target();
+        else if (action == 4) start_ocr(OcrAction::calibration_impact);
+        else if (action == 5) toggle_ghost_arc();
+        else if (action == 6) toggle_ghost_display("hotkey");
+        else if (action == 7) unlock_pinned_window("hotkey");
+    }
+
+    void sync_gesture_timer() {
+        if (!gesture_timer_) return;
+        const auto deadline = gesture_recognizer_.next_deadline_ms();
+        if (!deadline) {
+            gesture_timer_->stop();
+            return;
+        }
+        const auto delay_ms =
+            std::max<std::int64_t>(0, *deadline - gesture_now_ms());
+        gesture_timer_->start(static_cast<int>(delay_ms));
     }
 };
 

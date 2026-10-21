@@ -90,6 +90,20 @@ AppSettings load_settings_from(const std::filesystem::path& path) {
         read_value(path, L"ghost_arc_hotkey", settings.ghost_arc_hotkey);
     settings.ghost_toggle_hotkey =
         read_value(path, L"ghost_toggle_hotkey", settings.ghost_toggle_hotkey);
+    settings.region_trigger = hotkey_trigger_from_name(
+        read_value(path, L"region_hotkey_trigger", L"single"));
+    settings.base_trigger = hotkey_trigger_from_name(
+        read_value(path, L"base_hotkey_trigger", L"single"));
+    settings.target_trigger = hotkey_trigger_from_name(
+        read_value(path, L"target_hotkey_trigger", L"single"));
+    settings.quick_target_trigger = hotkey_trigger_from_name(
+        read_value(path, L"quick_target_hotkey_trigger", L"single"));
+    settings.impact_trigger = hotkey_trigger_from_name(
+        read_value(path, L"impact_hotkey_trigger", L"single"));
+    settings.ghost_arc_trigger = hotkey_trigger_from_name(
+        read_value(path, L"ghost_arc_hotkey_trigger", L"single"));
+    settings.ghost_toggle_trigger = hotkey_trigger_from_name(
+        read_value(path, L"ghost_toggle_hotkey_trigger", L"single"));
     settings.coordinate_pattern =
         read_value(path, L"coordinate_pattern", settings.coordinate_pattern);
     settings.backend = read_value(path, L"ocr_backend", L"rapid") == L"windows"
@@ -210,6 +224,20 @@ void save_settings_to(const std::filesystem::path& path,
     write_value(path, L"impact_hotkey", settings.impact_hotkey);
     write_value(path, L"ghost_arc_hotkey", settings.ghost_arc_hotkey);
     write_value(path, L"ghost_toggle_hotkey", settings.ghost_toggle_hotkey);
+    write_value(path, L"region_hotkey_trigger",
+                std::wstring{hotkey_trigger_name(settings.region_trigger)});
+    write_value(path, L"base_hotkey_trigger",
+                std::wstring{hotkey_trigger_name(settings.base_trigger)});
+    write_value(path, L"target_hotkey_trigger",
+                std::wstring{hotkey_trigger_name(settings.target_trigger)});
+    write_value(path, L"quick_target_hotkey_trigger",
+                std::wstring{hotkey_trigger_name(settings.quick_target_trigger)});
+    write_value(path, L"impact_hotkey_trigger",
+                std::wstring{hotkey_trigger_name(settings.impact_trigger)});
+    write_value(path, L"ghost_arc_hotkey_trigger",
+                std::wstring{hotkey_trigger_name(settings.ghost_arc_trigger)});
+    write_value(path, L"ghost_toggle_hotkey_trigger",
+                std::wstring{hotkey_trigger_name(settings.ghost_toggle_trigger)});
     write_value(path, L"coordinate_pattern", settings.coordinate_pattern);
     write_value(path, L"ocr_backend",
                 settings.backend == OcrBackend::rapid ? L"rapid" : L"windows");

@@ -35,10 +35,16 @@ protected:
                      qintptr* result) override;
 
 private:
-    static QKeySequenceEdit* make_hotkey(const std::wstring& value,
-                                         QHBoxLayout* layout,
-                                         const QString& label);
+    struct HotkeyEditors {
+        QKeySequenceEdit* editor{};
+        QComboBox* trigger{};
+    };
+    static HotkeyEditors make_hotkey(const std::wstring& value,
+                                     wardogs::HotkeyTrigger trigger,
+                                     QHBoxLayout* layout, const QString& label,
+                                     const QString& object_name);
     static std::wstring hotkey_text(const QKeySequenceEdit* editor);
+    static wardogs::HotkeyTrigger trigger_from_combo(const QComboBox* combo);
     void accept_if_valid();
     void request_ghost_adjustment();
     void notify_ghost_preview();
@@ -53,6 +59,13 @@ private:
     QKeySequenceEdit* impact_key_{};
     QKeySequenceEdit* ghost_arc_key_{};
     QKeySequenceEdit* ghost_toggle_key_{};
+    QComboBox* region_trigger_{};
+    QComboBox* base_trigger_{};
+    QComboBox* target_trigger_{};
+    QComboBox* quick_target_trigger_{};
+    QComboBox* impact_trigger_{};
+    QComboBox* ghost_arc_trigger_{};
+    QComboBox* ghost_toggle_trigger_{};
     QComboBox* ghost_preset_{};
     QPushButton* ghost_outline_{};
     QSlider* ghost_line_width_{};

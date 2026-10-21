@@ -41,6 +41,8 @@ int main() {
     saved.impact_hotkey = L"Ctrl+Shift+F12";
     saved.ghost_arc_hotkey = L"Ctrl+Shift+G";
     saved.ghost_toggle_hotkey = L"Ctrl+Alt+G";
+    saved.target_trigger = wardogs::HotkeyTrigger::double_press;
+    saved.ghost_arc_trigger = wardogs::HotkeyTrigger::long_press;
     saved.ghost_reticle.opacity_percent = 72;
     saved.ghost_reticle.width = 1120;
     saved.ghost_reticle.bearing_compensation_deg = -0.35;
@@ -66,6 +68,10 @@ int main() {
           "the ghost trajectory shortcut survives the explicit-path round trip");
     check(loaded.ghost_toggle_hotkey == L"Ctrl+Alt+G",
           "the ghost reticle toggle hotkey survives the explicit-path round trip");
+    check(loaded.target_trigger == wardogs::HotkeyTrigger::double_press &&
+              loaded.ghost_arc_trigger == wardogs::HotkeyTrigger::long_press &&
+              loaded.base_trigger == wardogs::HotkeyTrigger::single,
+          "hotkey trigger modes survive the explicit-path round trip");
     check(loaded.ghost_reticle.opacity_percent == 72 &&
               loaded.ghost_reticle.width == 1120 &&
               std::abs(loaded.ghost_reticle.bearing_compensation_deg + 0.35) <
@@ -163,6 +169,8 @@ int main() {
           "a missing hotkey key still falls back to its built-in default");
     check(defaults.ghost_toggle_hotkey.empty(),
           "the ghost reticle toggle stays opt-in for existing installations");
+    check(defaults.target_trigger == wardogs::HotkeyTrigger::single,
+          "missing trigger entries default to single press");
 
     fs::remove_all(directory);
     if (failures) {
