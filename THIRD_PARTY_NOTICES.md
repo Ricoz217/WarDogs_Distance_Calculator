@@ -12,8 +12,10 @@ The application loads only the recognition model. It does not distribute or exec
 
 ## Optional terrain data
 
-The separately distributed `.wdt` terrain packages are derived from Terrain3D
-elevation data extracted and processed by Apollyon for the unofficial community
-project **WARDOGS Artillery Calculator**. Attribution, processing details, and
-rights information are provided in `TERRAIN_DATA_NOTICE.md`, which must
-accompany every separately distributed terrain package.
+The separately supplied `.wdt` terrain packages contain elevation samples
+derived from WARDOGS game data. The source Terrain3D data was extracted and
+processed by Apollyon for the unofficial community project **WARDOGS Artillery
+Calculator**. The repository's MIT License does not cover the `.wdt` files,
+their source terrain data, or other WARDOGS/BULKHEAD assets. Attribution,
+processing details, and rights information are provided in
+`TERRAIN_DATA_NOTICE.md`, which must remain with every copy of the terrain data.

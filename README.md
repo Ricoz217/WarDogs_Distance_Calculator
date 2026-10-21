@@ -90,7 +90,9 @@ Windows 游戏坐标 OCR 与射表计算工具。方位角以正北（Y 轴正�
 
 高度数据与主程序分开分发。把下载的 `.wdt` 文件放入程序旁的 `terrain-packs` 目录，重新启动后，只有通过 SHA-256 校验且地图标识正确的数据包才会出现在高度模型选项中。当前识别以下文件：
 
-程序同时识别 Season 2 当前数据和 Season 1 旧数据。加载 Season 1 数据时，地图说明下方会以黄色警告该数据包已经过期；不能识别的 SHA-256 仍会被拒绝。数据来源、处理方式、署名和游戏资产权利说明见 [TERRAIN_DATA_NOTICE.md](TERRAIN_DATA_NOTICE.md)。单独分发高度包时应同时附带该声明文件。
+程序同时识别 Season 2 当前数据和 Season 1 旧数据。加载 Season 1 数据时，地图说明下方会以黄色警告该数据包已经过期；不能识别的 SHA-256 仍会被拒绝。
+
+地图高度包不会通过本仓库或 GitHub Releases 公开发布。`.wdt` 文件包含由 WARDOGS 游戏数据衍生的量化高程采样，底层游戏资产及地形数据的相关权利归 BULKHEAD 所有；Apollyon 为 WARDOGS Artillery Calculator 完成了源 Terrain3D 数据的提取与处理。本仓库的 MIT License 只适用于本项目源码及该许可证明确覆盖的原创内容，不适用于 `.wdt`、其源地形数据或其他 WARDOGS/BULKHEAD 资产，也不授予公开发布、再分发、再许可或销售这些数据的权利。完整署名、处理方式和权利说明见 [TERRAIN_DATA_NOTICE.md](TERRAIN_DATA_NOTICE.md)，该声明必须随地图高度包保留。
 
 | 地图 | 文件名 | Season 2 SHA-256 | Season 1 SHA-256（旧） |
 | --- | --- | --- | --- |
@@ -134,4 +136,4 @@ out\WarDogsDistanceCalculator-v1.4.2-win-x64.zip
 
 ## 许可证
 
-项目源码采用 [MIT License](LICENSE)。随程序分发的 Qt、ONNX Runtime 和 PP-OCRv6 模型遵循各自许可证，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。地图高度数据的来源及权利说明见 [TERRAIN_DATA_NOTICE.md](TERRAIN_DATA_NOTICE.md)。
+项目源码采用 [MIT License](LICENSE)。该许可证不覆盖地图高度包、其源地形数据、WARDOGS/BULKHEAD 资产或单独标明的第三方组件。随程序分发的 Qt、ONNX Runtime 和 PP-OCRv6 模型遵循各自许可证，详见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。地图高度数据不随 GitHub Release 发布，其署名、处理方式和权利范围见 [TERRAIN_DATA_NOTICE.md](TERRAIN_DATA_NOTICE.md)。
