@@ -4,6 +4,7 @@
 #include <fstream>
 #include <iostream>
 #include <cmath>
+#include <string>
 
 namespace {
 
@@ -35,6 +36,27 @@ int main() {
           "the ghost trajectory shortcut defaults to the unused F4 key");
     check(saved.ghost_toggle_hotkey.empty(),
           "the ghost reticle toggle hotkey is disabled by default");
+    check(saved.hotkey_profile == L"classic",
+          "the classic hotkey profile is selected by default");
+    check(saved.custom_hotkey_profiles.empty(),
+          "no custom hotkey profiles exist by default");
+    const auto& builtins = wardogs::builtin_hotkey_profiles();
+    check(builtins.size() == 2 && builtins[0].id == L"classic" &&
+              builtins[1].id == L"advanced" &&
+              builtins[1].name == L"默认配置2",
+          "two built-in hotkey profiles are available");
+    check(builtins[0].hotkeys[0] == L"F8" &&
+              builtins[0].triggers[0] == wardogs::HotkeyTrigger::single &&
+              builtins[1].hotkeys[0] == L"F8" &&
+              builtins[1].triggers[0] ==
+                  wardogs::HotkeyTrigger::long_press &&
+              builtins[1].hotkeys[2] == L"F9" &&
+              builtins[1].triggers[3] ==
+                  wardogs::HotkeyTrigger::double_press &&
+              builtins[1].hotkeys[6] == L"F10" &&
+              builtins[1].triggers[6] ==
+                  wardogs::HotkeyTrigger::long_press,
+          "the two default profiles use their intended mappings");
     check(saved.ghost_reticle.bearing_compensation_deg == 0.0,
           "ghost bearing compensation defaults to zero degrees");
     saved.region_hotkey = L"Ctrl+F8";
@@ -72,6 +94,14 @@ int main() {
               loaded.ghost_arc_trigger == wardogs::HotkeyTrigger::long_press &&
               loaded.base_trigger == wardogs::HotkeyTrigger::single,
           "hotkey trigger modes survive the explicit-path round trip");
+    check(loaded.hotkey_profile.rfind(L"custom-", 0) == 0,
+          "changing the active hotkeys selects a custom profile");
+    check(loaded.custom_hotkey_profiles.size() == 1 &&
+              loaded.custom_hotkey_profiles.front().name == L"我的配置" &&
+              loaded.custom_hotkey_profiles.front().hotkeys[0] == L"Ctrl+F8" &&
+              loaded.custom_hotkey_profiles.front().triggers[2] ==
+                  wardogs::HotkeyTrigger::double_press,
+          "currently configured hotkeys migrate into a preserved custom profile");
     check(loaded.ghost_reticle.opacity_percent == 72 &&
               loaded.ghost_reticle.width == 1120 &&
               std::abs(loaded.ghost_reticle.bearing_compensation_deg + 0.35) <
@@ -171,6 +201,98 @@ int main() {
           "the ghost reticle toggle stays opt-in for existing installations");
     check(defaults.target_trigger == wardogs::HotkeyTrigger::single,
           "missing trigger entries default to single press");
+    check(defaults.hotkey_profile == L"classic" &&
+              defaults.custom_hotkey_profiles.empty(),
+          "a fresh settings file uses the classic profile without custom copies");
+
+    AppSettings profile_saved;
+    profile_saved.region_hotkey = L"F8";
+    profile_saved.region_trigger = wardogs::HotkeyTrigger::long_press;
+    profile_saved.base_hotkey = L"F8";
+    profile_saved.base_trigger = wardogs::HotkeyTrigger::single;
+    profile_saved.target_hotkey = L"F9";
+    profile_saved.target_trigger = wardogs::HotkeyTrigger::single;
+    profile_saved.quick_target_hotkey = L"F9";
+    profile_saved.quick_target_trigger = wardogs::HotkeyTrigger::double_press;
+    profile_saved.impact_hotkey = L"F10";
+    profile_saved.impact_trigger = wardogs::HotkeyTrigger::single;
+    profile_saved.ghost_arc_hotkey = L"F10";
+    profile_saved.ghost_arc_trigger = wardogs::HotkeyTrigger::double_press;
+    profile_saved.ghost_toggle_hotkey = L"F10";
+    profile_saved.ghost_toggle_trigger = wardogs::HotkeyTrigger::long_press;
+    profile_saved.hotkey_profile = L"advanced";
+    wardogs::save_settings_to(path, profile_saved);
+    const AppSettings advanced_loaded = wardogs::load_settings_from(path);
+    check(advanced_loaded.hotkey_profile == L"advanced" &&
+              advanced_loaded.custom_hotkey_profiles.empty(),
+          "the five-key built-in profile survives an explicit-path round trip");
+    check(advanced_loaded.quick_target_trigger ==
+                  wardogs::HotkeyTrigger::double_press &&
+              advanced_loaded.ghost_toggle_trigger ==
+                  wardogs::HotkeyTrigger::long_press &&
+              advanced_loaded.region_hotkey == L"F8",
+          "the five-key profile keeps its trigger mapping");
+
+    wardogs::HotkeyProfile custom;
+    custom.id = L"custom-test";
+    custom.name = L"测试配置";
+    custom.description = L"自定义配置";
+    custom.hotkeys = {L"F6", L"F7", L"F8", L"F9",
+                      L"F10", L"F11", L"F12"};
+    custom.triggers.fill(wardogs::HotkeyTrigger::single);
+    profile_saved.custom_hotkey_profiles = {custom};
+    profile_saved.hotkey_profile = L"custom-test";
+    profile_saved.region_hotkey = custom.hotkeys[0];
+    profile_saved.base_hotkey = custom.hotkeys[1];
+    profile_saved.target_hotkey = custom.hotkeys[2];
+    profile_saved.quick_target_hotkey = custom.hotkeys[3];
+    profile_saved.impact_hotkey = custom.hotkeys[4];
+    profile_saved.ghost_arc_hotkey = custom.hotkeys[5];
+    profile_saved.ghost_toggle_hotkey = custom.hotkeys[6];
+    profile_saved.region_trigger = wardogs::HotkeyTrigger::single;
+    profile_saved.base_trigger = wardogs::HotkeyTrigger::single;
+    profile_saved.target_trigger = wardogs::HotkeyTrigger::single;
+    profile_saved.quick_target_trigger = wardogs::HotkeyTrigger::single;
+    profile_saved.impact_trigger = wardogs::HotkeyTrigger::single;
+    profile_saved.ghost_arc_trigger = wardogs::HotkeyTrigger::single;
+    profile_saved.ghost_toggle_trigger = wardogs::HotkeyTrigger::single;
+    wardogs::save_settings_to(path, profile_saved);
+    const AppSettings custom_loaded = wardogs::load_settings_from(path);
+    check(custom_loaded.hotkey_profile == L"custom-test" &&
+              custom_loaded.custom_hotkey_profiles.size() == 1 &&
+              custom_loaded.custom_hotkey_profiles.front().name == L"测试配置" &&
+              custom_loaded.custom_hotkey_profiles.front().hotkeys[0] ==
+                  L"F6",
+          "custom hotkey profiles survive the explicit-path round trip");
+    check(custom_loaded.region_hotkey == L"F6",
+          "the selected custom profile supplies the active hotkeys");
+
+    profile_saved.custom_hotkey_profiles.clear();
+    for (int index = 1; index <= 105; ++index) {
+        wardogs::HotkeyProfile extra;
+        extra.id = L"custom-" + std::to_wstring(index);
+        extra.name = L"配置" + std::to_wstring(index);
+        extra.description = L"自定义配置";
+        extra.hotkeys.fill(L"F6");
+        extra.triggers.fill(wardogs::HotkeyTrigger::single);
+        profile_saved.custom_hotkey_profiles.push_back(std::move(extra));
+    }
+    profile_saved.hotkey_profile = L"custom-1";
+    profile_saved.region_hotkey = L"F6";
+    profile_saved.base_hotkey = L"F6";
+    profile_saved.target_hotkey = L"F6";
+    profile_saved.quick_target_hotkey = L"F6";
+    profile_saved.impact_hotkey = L"F6";
+    profile_saved.ghost_arc_hotkey = L"F6";
+    profile_saved.ghost_toggle_hotkey = L"F6";
+    wardogs::save_settings_to(path, profile_saved);
+    const AppSettings capped_loaded = wardogs::load_settings_from(path);
+    check(capped_loaded.custom_hotkey_profiles.size() ==
+              wardogs::max_custom_hotkey_profiles,
+          "loading stops at the hundred-profile cap");
+    check(capped_loaded.custom_hotkey_profiles.back().id == L"custom-100" &&
+              capped_loaded.hotkey_profile == L"custom-1",
+          "the cap keeps the earliest profiles and the selected profile");
 
     fs::remove_all(directory);
     if (failures) {
